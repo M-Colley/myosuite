@@ -1,11 +1,12 @@
-from pathlib import Path
 from unittest.mock import Mock
 
 import myosuite_init
 
 
 def test_no_myoapi(monkeypatch, tmp_path):
-    monkeypatch.setattr(myosuite_init, "simhive_path", str(tmp_path / "simhive"))
+    monkeypatch.setattr(
+        myosuite_init, "simhive_path", str(tmp_path / "simhive")
+    )
     fetch_git = Mock()
     monkeypatch.setattr(myosuite_init, "fetch_git", fetch_git)
     monkeypatch.setattr("builtins.input", lambda _: "no")

@@ -324,11 +324,15 @@ class BimanualEnvV1(BaseV0):
 
         touching = obs_dict["touching_body"][..., 3] == 1
 
-        if obs_dict is self.obs_dict and np.any(touching):
-            self.goal_touch += 1
-        solved = (goal_dis < self.proximity_th) & (
-            self.goal_touch >= self.TARGET_GOAL_TOUCH
+        initial_goal_touch = self.goal_touch if obs_dict is self.obs_dict else 0
+        goal_touch = initial_goal_touch + (
+            np.cumsum(touching, axis=-1) if touching.ndim else touching.astype(int)
         )
+        solved = (goal_dis < self.proximity_th) & (
+            goal_touch >= self.TARGET_GOAL_TOUCH
+        )
+        if obs_dict is self.obs_dict:
+            self.goal_touch += int(np.any(touching))
         rwd_dict = collections.OrderedDict(
             (
                 # Optional Keys

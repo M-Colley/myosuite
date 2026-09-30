@@ -590,6 +590,7 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         - Essential keys are added below. Users can add more keys by overriding this function in their task-env
         - Requires necessary keys (dense, sparse, solved, done) in rwd_dict to be populated
         - Visual_dict can be {} if users hasn't explicitly updated it explicitly for current time
+        - Full state snapshots are opt-in via include_env_state or include_state=True
         """
 
         # resolve if current visuals are available

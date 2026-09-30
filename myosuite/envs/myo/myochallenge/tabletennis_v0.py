@@ -162,15 +162,62 @@ class TableTennisEnvV0(BaseV0):
             else 0
         )
         ball_pos = obs_dict["ball_pos"]
-        trajectory_solved = evaluate_pingpong_trajectory(self.contact_trajectory) is None
-        paddle_quat_err = np.linalg.norm(obs_dict["padde_ori_err"], axis=-1)
-        torso_err = abs(
-            self.mj_data.qpos[
-                self.mj_model.jnt_qposadr[self.mj_model.joint("flex_extension").id]
+        touching_info = np.asarray(obs_dict["touching_info"])
+        live_observation = obs_dict is self.obs_dict or touching_info.ndim < 3
+        if touching_info.ndim == 1:
+            touching_info = touching_info[None, None, :]
+        elif touching_info.ndim == 2:
+            touching_info = touching_info[None, ...]
+        if live_observation:
+            contact_issues = [evaluate_pingpong_trajectory(self.contact_trajectory)]
+        else:
+            contact_issues = [
+                evaluate_pingpong_trajectory(
+                    [
+                        {
+                            PingpongContactLabels(index)
+                            for index, is_touching in enumerate(touch_frame)
+                            if is_touching
+                        }
+                        for touch_frame in trajectory
+                    ]
+                )
+                for trajectory in touching_info
+            ]
+        trajectory_solved = np.array([issue is None for issue in contact_issues])
+        trajectory_done = np.array(
+            [
+                issue
+                in (
+                    ContactTrajIssue.OWN_HALF,
+                    ContactTrajIssue.DOUBLE_TOUCH,
+                    ContactTrajIssue.NO_PADDLE,
+                )
+                for issue in contact_issues
             ]
         )
+        paddle_quat_err = np.linalg.norm(obs_dict["padde_ori_err"], axis=-1)
+        torso_qpos_index = np.flatnonzero(
+            self.id_info.myo_joint_range
+            == self.mj_model.jnt_qposadr[
+                self.mj_model.joint("flex_extension").id
+            ]
+        )
+        torso_err = np.abs(obs_dict["body_qpos"][..., torso_qpos_index[0]])
         paddle_touch = obs_dict["touching_info"][..., 0]
-        solved = np.full_like(paddle_touch, trajectory_solved, dtype=bool)
+        if paddle_touch.ndim == 0:
+            solved = trajectory_solved[0]
+            contact_done = trajectory_done[0]
+        else:
+            status_shape = (len(trajectory_solved),) + (1,) * (
+                paddle_touch.ndim - 1
+            )
+            solved = np.broadcast_to(
+                trajectory_solved.reshape(status_shape), paddle_touch.shape
+            )
+            contact_done = np.broadcast_to(
+                trajectory_done.reshape(status_shape), paddle_touch.shape
+            )
         # =========== for the baseline, we provide an h5 file in which you could perform simple imitation learning ===========
         # ======== uncomment to load the files and rewards =======================
         # qpos_ref, qvel_ref, qpos_err, qvel_err = self.ref_traj()()
@@ -198,7 +245,7 @@ class TableTennisEnvV0(BaseV0):
                     "done",
                     self._get_done(
                         ball_pos[..., 2],
-                        trajectory_solved,
+                        contact_done,
                         np.asarray(obs_dict["time"])[..., 0],
                     ),
                 ),
@@ -266,13 +313,12 @@ class TableTennisEnvV0(BaseV0):
 
         return _get_ref
 
-    def _get_done(self, z, solved, time):
+    def _get_done(self, z, contact_done, time):
         return np.logical_or.reduce(
             (
                 time > MAX_TIME,
                 z < 0.3,
-                solved,
-                evaluate_pingpong_trajectory(self.contact_trajectory) in [0, 2, 3],
+                contact_done,
             )
         )
 

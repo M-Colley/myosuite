@@ -2,6 +2,7 @@ import unittest
 import os
 import gymnasium as gym
 import mujoco
+import numpy as np
 from myosuite.envs.heightfields import ChaseTagField, TrackField
 from myosuite.tests.test_envs import assert_close
 
@@ -35,9 +36,9 @@ class TestHeightfields(unittest.TestCase):
         return TrackField(
             sim=sim, 
             rng=np_random,
-            rough_difficulties=[0.0, 0.1, 0.2],
-            hills_difficulties=[0.0, 0.1, 0.2],
-            stairs_difficulties=[0.0, 0.1, 0.2],
+            rough_difficulties=[0.1, 0.2, 0.3],
+            hills_difficulties=[0.1, 0.2, 0.3],
+            stairs_difficulties=[0.1, 0.2, 0.3],
             )
 
     def test_chasetagfield(self):
@@ -49,6 +50,7 @@ class TestHeightfields(unittest.TestCase):
         heightfield2.sample()
         data2 = heightfield2.hfield.data.copy()
         assert_close(data, data2)
+        self.assertFalse(np.all(data[-(len(data) // 3) :] == 0))
 
     def test_trackfield(self):
         seed = 42

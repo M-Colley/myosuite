@@ -167,9 +167,14 @@ class ProprioceptiveEnvV0(BaseV0):
         rwd_dict["dense"] = np.sum(
             [wt * rwd_dict[key] for key, wt in self.rwd_keys_wt.items()], axis=0
         )
-        if list(self.mj_model.site_rgba[self.success_indicator_sid, :2]) != [0.0, 2.0]:
+        if (
+            np.size(rwd_dict["solved"]) == 1
+            and list(self.mj_model.site_rgba[self.success_indicator_sid, :2])
+            != [0.0, 2.0]
+        ):
+            solved = bool(np.asarray(rwd_dict["solved"]).item())
             self.mj_model.site_rgba[self.success_indicator_sid, :2] = (
-                np.array([0, 2]) if rwd_dict["solved"] else np.array([2, 0])
+                np.array([0, 2]) if solved else np.array([2, 0])
             )
         return rwd_dict
 

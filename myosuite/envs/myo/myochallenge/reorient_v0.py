@@ -176,10 +176,11 @@ class ReorientEnvV0(BaseV0):
             [wt * rwd_dict[key] for key, wt in self.rwd_keys_wt.items()], axis=0
         )
 
-        # Sucess Indicator
-        self.mj_model.site_rgba[self.success_indicator_sid, :2] = (
-            np.array([0, 2]) if rwd_dict["solved"] else np.array([2, 0])
-        )
+        if np.size(rwd_dict["solved"]) == 1:
+            solved = bool(np.asarray(rwd_dict["solved"]).item())
+            self.mj_model.site_rgba[self.success_indicator_sid, :2] = (
+                np.array([0, 2]) if solved else np.array([2, 0])
+            )
         return rwd_dict
 
     def get_metrics(self, paths, successful_steps=5):

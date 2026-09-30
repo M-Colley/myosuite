@@ -86,11 +86,11 @@ class ReachEnvV0(BaseV0):
             obs_dict["act"] = mj_data.act[:].copy()
 
         # reach error
-        obs_dict["tip_pos"] = np.concatenate(
-            [mj_data.site_xpos[sid].copy() for sid in self.tip_sids]
-        )
-        obs_dict["target_pos"] = np.concatenate(
-            [mj_data.site_xpos[sid].copy() for sid in self.target_sids]
+        tip_pos = [mj_data.site_xpos[sid].copy() for sid in self.tip_sids]
+        target_pos = [mj_data.site_xpos[sid].copy() for sid in self.target_sids]
+        obs_dict["tip_pos"] = np.concatenate(tip_pos) if tip_pos else np.array([])
+        obs_dict["target_pos"] = (
+            np.concatenate(target_pos) if target_pos else np.array([])
         )
         obs_dict["reach_err"] = np.array(obs_dict["target_pos"]) - np.array(
             obs_dict["tip_pos"]
