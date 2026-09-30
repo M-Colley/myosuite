@@ -301,6 +301,34 @@ class TestReferenceMotion(unittest.TestCase):
             rtol=1e-5,
             err_msg="Extrapolation doesn't match final position",
         )
+
+    def test_interpolation_uses_linear_values_and_quaternion_slerp(self):
+        reference = {
+            "time": np.array([0.0, 2.0, 4.0]),
+            "robot": np.array([[0.0, 2.0], [4.0, 6.0], [8.0, 10.0]]),
+            "robot_vel": np.array([[-2.0, 0.0], [2.0, 4.0], [6.0, 8.0]]),
+            "object": np.array(
+                [
+                    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                    [2.0, 4.0, 6.0, np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)],
+                    [4.0, 8.0, 12.0, 0.0, 0.0, 0.0, 1.0],
+                ]
+            ),
+        }
+
+        for reference_motion in (
+            NumpyReferenceMotion(reference),
+            JaxReferenceMotion(reference),
+        ):
+            actual = reference_motion.get_reference(1.0)
+            np.testing.assert_allclose(actual.robot, [2.0, 4.0], atol=1e-6)
+            np.testing.assert_allclose(actual.robot_vel, [0.0, 2.0], atol=1e-6)
+            np.testing.assert_allclose(actual.object[:3], [1.0, 2.0, 3.0], atol=1e-6)
+            np.testing.assert_allclose(
+                actual.object[3:],
+                [np.cos(np.pi / 8), 0.0, 0.0, np.sin(np.pi / 8)],
+                atol=1e-6,
+            )
         
     def test_missing_init_fixed(self):
         """Test initialization when robot_init and object_init are missing for fixed reference"""

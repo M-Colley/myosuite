@@ -9,6 +9,40 @@ import pickle
 # Time precision to use. Avoids rounding/resolution errors during comparisons
 _TIME_PRECISION = 4
 
+
+def _slerp_quat(quat0, quat1, blend):
+    quat0 = np.asarray(quat0)
+    quat1 = np.asarray(quat1)
+    dot = np.sum(quat0 * quat1, axis=-1, keepdims=True)
+    quat1 = np.where(dot < 0, -quat1, quat1)
+    dot = np.clip(np.abs(dot), -1.0, 1.0)
+
+    theta = np.arccos(dot)
+    sin_theta = np.sin(theta)
+    safe_sin_theta = np.where(sin_theta > 1e-8, sin_theta, 1.0)
+    blend = np.asarray(blend)
+    while blend.ndim < quat0.ndim:
+        blend = np.expand_dims(blend, axis=-1)
+
+    spherical = (
+        np.sin((1.0 - blend) * theta) / safe_sin_theta * quat0
+        + np.sin(blend * theta) / safe_sin_theta * quat1
+    )
+    linear = (1.0 - blend) * quat0 + blend * quat1
+    result = np.where(dot > 0.9995, linear, spherical)
+    norm = np.linalg.norm(result, axis=-1, keepdims=True)
+    return result / np.maximum(norm, 1e-8)
+
+
+def _interpolate_object(object0, object1, blend):
+    if object0.shape[-1] != 7:
+        return (1.0 - blend) * object0 + blend * object1
+
+    position = (1.0 - blend) * object0[:3] + blend * object1[:3]
+    orientation = _slerp_quat(object0[3:], object1[3:], blend)
+    return np.concatenate((position, orientation), axis=-1)
+
+
 # Reference structure
 ReferenceStruct = collections.namedtuple('ReferenceStruct',
         ['time',        # float(N)
@@ -241,16 +275,23 @@ class ReferenceMotion():
             else:
                 # Linearly interpolate between frames to get references
                 # ref[time] = blend(ref[ind] + (1-blend)*ref[ind_next])
-                print(f"Direct frame reference not found at {time} sec. Attempting linear blend between two frames [{ind},{ind_next}]")
-                blend = time - self.reference['time'][ind]/(self.reference['time'][ind_next]-self.reference['time'][ind])
+                blend = (time - self.reference['time'][ind]) / (
+                    self.reference['time'][ind_next] - self.reference['time'][ind]
+                )
 
                 # robot motion
                 if self.robot_horizon>1:
-                    robot_ref = (1.0-blend)**self.reference['robot'][ind]+blend*self.reference['robot'][ind_next]
+                    robot_ref = (
+                        (1.0 - blend) * self.reference['robot'][ind]
+                        + blend * self.reference['robot'][ind_next]
+                    )
                     if self.reference['robot_vel'] is None:
                         robot_vel_ref = None
                     else:
-                        robot_vel_ref = (1.0-blend)**self.reference['robot_vel'][ind]+blend*self.reference['robot_vel'][ind_next]
+                        robot_vel_ref = (
+                            (1.0 - blend) * self.reference['robot_vel'][ind]
+                            + blend * self.reference['robot_vel'][ind_next]
+                        )
                 else:
                     robot_ref = self.reference['robot'][0]
                     robot_vel_ref = None if self.reference['robot_vel'] is None else self.reference['robot_vel'][0]
@@ -259,7 +300,11 @@ class ReferenceMotion():
                 if self.reference['object'] is None:
                     object_ref = None
                 elif self.object_horizon>1:
-                    object_ref = (1.0-blend)*self.reference['object'][ind]+blend*self.reference['object'][ind_next]
+                    object_ref = _interpolate_object(
+                        self.reference['object'][ind],
+                        self.reference['object'][ind_next],
+                        blend,
+                    )
                 else:
                     object_ref = self.reference['object'][0]
 
