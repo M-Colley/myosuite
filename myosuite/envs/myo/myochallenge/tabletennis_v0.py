@@ -154,30 +154,23 @@ class TableTennisEnvV0(BaseV0):
         return obs_dict
 
     def get_reward_dict(self, obs_dict):
-        reach_dist = np.abs(np.linalg.norm(self.obs_dict["reach_err"], axis=-1))
-        palm_dist = np.abs(np.linalg.norm(self.obs_dict["palm_err"], axis=-1))
+        reach_dist = np.abs(np.linalg.norm(obs_dict["reach_err"], axis=-1))
+        palm_dist = np.abs(np.linalg.norm(obs_dict["palm_err"], axis=-1))
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
-        ball_pos = (
-            obs_dict["ball_pos"][0][0]
-            if obs_dict["ball_pos"].ndim == 3
-            else obs_dict["ball_pos"]
-        )
-        solved = evaluate_pingpong_trajectory(self.contact_trajectory) == None
+        ball_pos = obs_dict["ball_pos"]
+        trajectory_solved = evaluate_pingpong_trajectory(self.contact_trajectory) is None
         paddle_quat_err = np.linalg.norm(obs_dict["padde_ori_err"], axis=-1)
         torso_err = abs(
             self.mj_data.qpos[
                 self.mj_model.jnt_qposadr[self.mj_model.joint("flex_extension").id]
             ]
         )
-        paddle_touch = (
-            obs_dict["touching_info"][0][0]
-            if obs_dict["touching_info"].ndim == 3
-            else obs_dict["touching_info"]
-        )
+        paddle_touch = obs_dict["touching_info"][..., 0]
+        solved = np.full_like(paddle_touch, trajectory_solved, dtype=bool)
         # =========== for the baseline, we provide an h5 file in which you could perform simple imitation learning ===========
         # ======== uncomment to load the files and rewards =======================
         # qpos_ref, qvel_ref, qpos_err, qvel_err = self.ref_traj()()
@@ -199,23 +192,32 @@ class TableTennisEnvV0(BaseV0):
                 # ('ref_qvel_err', -1 * ref_qvel_err),
                 # Must keys
                 ("act_reg", -1.0 * act_mag),
-                ("sparse", paddle_touch[0] == 1),  # paddle_touching
-                ("solved", np.array([[solved]])),
-                ("done", np.array([[self._get_done(ball_pos[-1], solved)]])),
+                ("sparse", paddle_touch == 1),  # paddle_touching
+                ("solved", solved),
+                (
+                    "done",
+                    self._get_done(
+                        ball_pos[..., 2],
+                        trajectory_solved,
+                        np.asarray(obs_dict["time"])[..., 0],
+                    ),
+                ),
             )
         )
 
-        rwd_dict["dense"] = sum(
-            float(wt) * float(np.array(rwd_dict[key]).squeeze())
-            for key, wt in self.rwd_keys_wt.items()
+        rwd_dict["dense"] = np.sum(
+            [wt * rwd_dict[key] for key, wt in self.rwd_keys_wt.items()], axis=0
         )
 
-        if rwd_dict["solved"]:
+        if obs_dict is self.obs_dict and bool(np.asarray(rwd_dict["solved"]).item()):
             self.cur_rally += 1
-        if rwd_dict["solved"] and self.cur_rally < self.rally_count:
-            rwd_dict["done"] = False
-            rwd_dict["solved"] = False
-            self.obs_dict["time"] = 0
+        if (
+            obs_dict is self.obs_dict
+            and bool(np.asarray(rwd_dict["solved"]).item())
+            and self.cur_rally < self.rally_count
+        ):
+            rwd_dict["done"] = np.zeros_like(rwd_dict["done"], dtype=bool)
+            rwd_dict["solved"] = np.zeros_like(rwd_dict["solved"], dtype=bool)
             self.mj_data.time = 0
             self.contact_trajectory = []
             self.relaunch_ball()
@@ -264,17 +266,15 @@ class TableTennisEnvV0(BaseV0):
 
         return _get_ref
 
-    def _get_done(self, z, solved):
-        if self.obs_dict["time"] > MAX_TIME:
-            return 1
-        elif z < 0.3:
-            self.obs_dict["time"] = MAX_TIME
-            return 1
-        elif solved:
-            return 1
-        elif evaluate_pingpong_trajectory(self.contact_trajectory) in [0, 2, 3]:
-            return 1
-        return 0
+    def _get_done(self, z, solved, time):
+        return np.logical_or.reduce(
+            (
+                time > MAX_TIME,
+                z < 0.3,
+                solved,
+                evaluate_pingpong_trajectory(self.contact_trajectory) in [0, 2, 3],
+            )
+        )
 
     def _ball_label_to_obs(self, touching_body):
         # Function to convert touching body set to a binary observation vector
@@ -331,6 +331,7 @@ class TableTennisEnvV0(BaseV0):
         return data.sensordata[start : start + dim]
 
     def reset(self, reset_qpos=None, reset_qvel=None, **kwargs):
+        self._reseed_for_reset(kwargs)
         # self.mj_model.body_pos[self.object_bid] = self.np_random.uniform(**self.target_xyz_range)
         # self.mj_model.body_quat[self.object_bid] = euler2quat(self.np_random.uniform(**self.target_rxryrz_range))
         self.contact_trajectory = []

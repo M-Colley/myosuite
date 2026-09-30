@@ -15,6 +15,7 @@ USAGE:\n
     $ python logger/examine_logs.py --env_name rpFrankaRobotiqData-v0 --rollout_path teleOp_trace.h5 --rollout_format RoboSet --render offscreen --compress_paths False -c left_cam -c right_cam -c top_cam -c Franka_wrist_cam --plot_paths True
 """
 
+import ast
 import os
 import time
 
@@ -155,9 +156,10 @@ def examine_logs(
     env = (
         gym.make(env_name)
         if env_args == None
-        else gym.make(env_name, **(eval(env_args)))
+        else gym.make(env_name, **(ast.literal_eval(env_args)))
     )
     env = env.unwrapped
+    env.include_env_state = rollout_format == "RoboHive"
     env.seed(seed)
 
     # Start a "trace" for recording rollouts

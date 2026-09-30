@@ -90,9 +90,9 @@ class ObjHoldFixedEnvV0(BaseV0):
         return obs_dict
 
     def get_reward_dict(self, obs_dict):
-        goal_dist = np.abs(np.linalg.norm(self.obs_dict["obj_err"], axis=-1))  # -0.040)
+        goal_dist = np.abs(np.linalg.norm(obs_dict["obj_err"], axis=-1))  # -0.040)
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -124,6 +124,7 @@ class ObjHoldFixedEnvV0(BaseV0):
 class ObjHoldRandomEnvV0(ObjHoldFixedEnvV0):
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # randomize target pos
         self.mj_model.site_pos[self.goal_sid] = (
             self.object_init_pos

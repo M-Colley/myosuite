@@ -432,22 +432,24 @@ class SoccerEnvV0(WalkEnvV0):
         """
         # act_mag = np.linalg.norm(self.obs_dict['act'], axis=-1)/self.mj_model.na if self.mj_model.na !=0 else 0
         act_mag = (
-            np.mean(np.square(self.obs_dict["act"])) if self.mj_model.na != 0 else 0
+            np.mean(np.square(obs_dict["act"]), axis=-1)
+            if self.mj_model.na != 0
+            else 0
         )
 
-        goal_scored = self._goal_scored_condition()
-        time_limit_exceeded = self.obs_dict["time"] >= self.max_time
-        fallen = self._get_fallen_condition()
+        goal_scored = self._goal_scored_condition(obs_dict)
+        time_limit_exceeded = obs_dict["time"][..., 0] >= self.max_time
+        fallen = obs_dict["model_root_pos"][..., 2] < 0.2
 
         pain = (
             self.get_jnt_limit_violation()
         )  # Joint limit violation torque as pain score
-        done = bool(goal_scored or time_limit_exceeded or fallen)
+        done = np.logical_or.reduce((goal_scored, time_limit_exceeded, fallen))
         # ----------------------
 
         # Example reward, you should change this!
         distance = np.linalg.norm(
-            obs_dict["model_root_pos"].flatten()[0:3] - obs_dict["ball_pos"].flatten()
+            obs_dict["model_root_pos"][..., :3] - obs_dict["ball_pos"], axis=-1
         )
 
         rwd_dict = collections.OrderedDict(
@@ -457,14 +459,14 @@ class SoccerEnvV0(WalkEnvV0):
                 # Update reward keys (DEFAULT_RWD_KEYS_AND_WEIGHTS) accordingly to update final rewards
                 # Example: simple distance function
                 # Optional Keys
-                ("goal_scored", float(goal_scored)),
-                ("time_cost", float(self.obs_dict["time"])),
+                ("goal_scored", goal_scored),
+                ("time_cost", obs_dict["time"][..., 0]),
                 ("act_reg", act_mag),
                 ("pain", pain),
                 # Must keys
-                ("sparse", float(done)),
-                ("solved", float(goal_scored)),
-                ("done", float(self._get_done())),
+                ("sparse", done),
+                ("solved", goal_scored),
+                ("done", done),
             )
         )
         rwd_dict["dense"] = np.sum(
@@ -503,6 +505,7 @@ class SoccerEnvV0(WalkEnvV0):
         return results
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # randomized initial state
         qpos, qvel = self._get_reset_state()
         self.robot.sync_sims(
@@ -590,27 +593,30 @@ class SoccerEnvV0(WalkEnvV0):
 
         self.soccer_ball_id = self.mj_model.body("soccer_ball").id
 
-    def _get_done(self):
-        if self._goal_scored_condition():
-            return 1
-        if self.obs_dict["time"] >= self.max_time:
-            return 1
-        if self._get_fallen_condition():
-            return 1
-        return 0
+    def _get_done(self, obs_dict):
+        return np.logical_or.reduce(
+            (
+                self._goal_scored_condition(obs_dict),
+                obs_dict["time"][..., 0] >= self.max_time,
+                obs_dict["model_root_pos"][..., 2] < 0.2,
+            )
+        )
 
-    def _goal_scored_condition(self):
+    def _goal_scored_condition(self, obs_dict):
         """
         Checks if the ball has entered the goal.
         The ball must cross GOAL_X_POS and be within the GOAL_Y/Z bounds.
         """
-        ball_pos = self.mj_data.body(self.soccer_ball_id).xpos.copy()
+        ball_pos = obs_dict["ball_pos"]
 
-        is_x_past_goal = ball_pos[0] >= self.GOAL_X_POS
-        is_y_in_bounds = self.GOAL_Y_MIN <= ball_pos[1] <= self.GOAL_Y_MAX
-        is_z_in_bounds = self.GOAL_Z_MIN <= ball_pos[2] <= self.GOAL_Z_MAX
-
-        return bool(is_x_past_goal and is_y_in_bounds and is_z_in_bounds)
+        is_x_past_goal = ball_pos[..., 0] >= self.GOAL_X_POS
+        is_y_in_bounds = (self.GOAL_Y_MIN <= ball_pos[..., 1]) & (
+            ball_pos[..., 1] <= self.GOAL_Y_MAX
+        )
+        is_z_in_bounds = (self.GOAL_Z_MIN <= ball_pos[..., 2]) & (
+            ball_pos[..., 2] <= self.GOAL_Z_MAX
+        )
+        return is_x_past_goal & is_y_in_bounds & is_z_in_bounds
 
     def _get_fallen_condition(self):
         """

@@ -86,16 +86,12 @@ class ReachEnvV0(BaseV0):
             obs_dict["act"] = mj_data.act[:].copy()
 
         # reach error
-        obs_dict["tip_pos"] = np.array([])
-        obs_dict["target_pos"] = np.array([])
-        for isite in range(len(self.tip_sids)):
-            obs_dict["tip_pos"] = np.append(
-                obs_dict["tip_pos"], mj_data.site_xpos[self.tip_sids[isite]].copy()
-            )
-            obs_dict["target_pos"] = np.append(
-                obs_dict["target_pos"],
-                mj_data.site_xpos[self.target_sids[isite]].copy(),
-            )
+        obs_dict["tip_pos"] = np.concatenate(
+            [mj_data.site_xpos[sid].copy() for sid in self.tip_sids]
+        )
+        obs_dict["target_pos"] = np.concatenate(
+            [mj_data.site_xpos[sid].copy() for sid in self.target_sids]
+        )
         obs_dict["reach_err"] = np.array(obs_dict["target_pos"]) - np.array(
             obs_dict["tip_pos"]
         )
@@ -105,14 +101,14 @@ class ReachEnvV0(BaseV0):
         reach_dist = np.linalg.norm(obs_dict["reach_err"], axis=-1)
         vel_dist = np.linalg.norm(obs_dict["qvel"], axis=-1)
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
-        far_th = (
-            self.far_th * len(self.tip_sids)
-            if np.squeeze(obs_dict["time"]) > 2 * self.dt
-            else np.inf
+        far_th = np.where(
+            np.squeeze(obs_dict["time"], axis=-1) > 2 * self.dt,
+            self.far_th * len(self.tip_sids),
+            np.inf,
         )
         # near_th = len(self.tip_sids)*.0125
         near_th = len(self.tip_sids) * 0.050
@@ -167,6 +163,7 @@ class ReachEnvV0(BaseV0):
         return qpos_new
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # generate random targets
         if np.ptp(self.joint_random_range) > 0:
             self.mj_data.qpos = self.generate_qpos()
@@ -294,7 +291,7 @@ class WalkEnvV0(BaseV0):
             ["hip_adduction_l", "hip_adduction_r", "hip_rotation_l", "hip_rotation_r"]
         )
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -342,6 +339,7 @@ class WalkEnvV0(BaseV0):
         return results
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         self.steps = 0
         if self.reset_type == "random":
             qpos, qvel = self.get_randomized_initial_state()
@@ -574,6 +572,7 @@ class TerrainEnvV0(WalkEnvV0):
         self.init_qvel[:] = 0.0
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         self.steps = 0
         if self.terrain == "rough":
             rough = self.np_random.uniform(low=-0.5, high=0.5, size=(10000,))

@@ -10,6 +10,7 @@ Separate job scripts are provided to run few other algorithms
 - For model-based NPG see here: https://github.com/aravindr93/mjrl/tree/master/mjrl/algos/model_accel
 """
 
+import ast
 import time as timer
 
 from mjrl.algos.batch_reinforce import BatchREINFORCE
@@ -24,8 +25,8 @@ from mjrl.utils.train_agent import train_agent
 def train_loop(job_data) -> None:
 
     e = GymEnv(job_data.env)
-    policy_size = tuple(eval(job_data.policy_size))
-    vf_hidden_size = tuple(eval(job_data.vf_hidden_size))
+    policy_size = tuple(ast.literal_eval(job_data.policy_size))
+    vf_hidden_size = tuple(ast.literal_eval(job_data.vf_hidden_size))
 
     policy = MLP(
         e.spec,

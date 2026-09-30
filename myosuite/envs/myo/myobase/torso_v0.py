@@ -100,7 +100,7 @@ class TorsoEnvV0(BaseV0):
 
     def get_reward_dict(self, obs_dict):
         pose_dist = np.linalg.norm(obs_dict["pose_err"], axis=-1)
-        act_mag = np.linalg.norm(self.obs_dict["act"], axis=-1)
+        act_mag = np.linalg.norm(obs_dict["act"], axis=-1)
         if self.mj_model.na != 0:
             act_mag = act_mag / self.mj_model.na
         far_th = np.pi
@@ -128,6 +128,7 @@ class TorsoEnvV0(BaseV0):
         return rwd_dict
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # update init state
         if self.reset_type is None or self.reset_type == "none":
             # no reset; use last state

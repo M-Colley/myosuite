@@ -141,7 +141,7 @@ class PenTwirlFixedEnvV0(BaseV0):
         # dropped = obs_dict['obj_pos'][:,:,2] < 0.075 if obs_dict['obj_pos'].ndim==3 else obs_dict['obj_pos'][2] < 0.075
         dropped = pos_align > 0.075
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -172,6 +172,7 @@ class PenTwirlFixedEnvV0(BaseV0):
 class PenTwirlRandomEnvV0(PenTwirlFixedEnvV0):
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # randomize target
         desired_orien = np.zeros(3)
         desired_orien[0] = self.np_random.uniform(low=-1, high=1)

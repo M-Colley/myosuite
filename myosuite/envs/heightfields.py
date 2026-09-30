@@ -394,18 +394,18 @@ class TrackField(HeightField):
             ]
             self.terrain_type = track_type
             n_patches = len(difficulties)
-            patch_starts = np.arange(0, self.nrow, int(self.nrow // n_patches))
+            patch_starts = np.linspace(0, self.nrow, n_patches + 1, dtype=int)
         elif self.reset_type == "random_mixed":
             # random mixed terrain type
             n_patches = 24
-            patch_starts = np.arange(0, self.nrow, int(self.nrow // n_patches))
+            patch_starts = np.linspace(0, self.nrow, n_patches + 1, dtype=int)
             terrain_fn = lambda patch_start, patch_end, i: terrain_fn_list[
                 self.rng.choice(n_types)
             ][0](patch_start, patch_end, i)
             self.terrain_type = TrackTypes.MIXED
         else:
             raise ValueError(f"Invalid reset type: {self.reset_type}")
-        for i in range(patch_starts[:-1].shape[0]):
+        for i in range(n_patches):
             terrain_fn(patch_starts[i], patch_starts[i + 1], i)
 
     def _compute_stairs_track(self, patch_start, patch_end, i):
@@ -448,7 +448,7 @@ class TrackField(HeightField):
         Computes a rough terrain patch.
         """
         length = int(patch_end - patch_start)
-        fill_data = np.random.uniform(-1, 1, size=(length, int(self.ncol)))
+        fill_data = self.rng.uniform(-1, 1, size=(length, int(self.ncol)))
         scalar = self.rng.uniform(low=0, high=self.rough_difficulties[i])
         fill_data = (fill_data - np.min(fill_data)) / (
             np.max(fill_data) - np.min(fill_data)

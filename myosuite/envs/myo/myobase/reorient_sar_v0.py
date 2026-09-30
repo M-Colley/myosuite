@@ -142,7 +142,7 @@ class ProprioceptiveEnvV0(BaseV0):
         rot_align = calculate_cosine(obs_dict["obj_rot"], obs_dict["obj_des_rot"])
         dropped = pos_align > 0.075
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -205,6 +205,7 @@ class Geometries8EnvV0(ProprioceptiveEnvV0):
         self.tar_t_gid = self.mj_model.geom("t_top").id
         self.tar_b_gid = self.mj_model.geom("t_bot").id
 
+        self._reseed_for_reset(kwargs)
         geom_type = self.np_random.choice([3, 4, 5, 6])
 
         if geom_type == 3:
@@ -264,6 +265,7 @@ class Geometries8EnvV0(ProprioceptiveEnvV0):
 
 class Geometries100EnvV0(ProprioceptiveEnvV0):
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         ellips = {
             0: [[0.02843, 0.0256, 0.02902], [0.74792, 0.35159, 0.80154, 1.0]],
             1: [[0.01057, 0.02655, 0.0328], [0.23366, 0.67864, 0.53721, 1.0]],
@@ -439,6 +441,7 @@ class Geometries100EnvV0(ProprioceptiveEnvV0):
 
 class InDistribution(ProprioceptiveEnvV0):
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         ellips = {
             0: [[0.0179, 0.0446, 0.0356], [0.34, 0.2627, 0.3952, 1.0]],
             1: [[0.0218, 0.0327, 0.0237], [0.3313, 0.8439, 0.3636, 1.0]],
@@ -1516,6 +1519,7 @@ class InDistribution(ProprioceptiveEnvV0):
 
 class OutofDistribution(ProprioceptiveEnvV0):
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         ellips = {
             0: [[0.0192, 0.0452, 0.0499], [0.5267, 0.4574, 0.8141, 1.0]],
             1: [[0.0139, 0.0151, 0.0196], [0.732, 0.149, 0.7571, 1.0]],

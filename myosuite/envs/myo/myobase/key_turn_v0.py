@@ -115,10 +115,10 @@ class KeyTurnEnvV0(BaseV0):
 
     def get_reward_dict(self, obs_dict):
         IF_approach_dist = np.abs(
-            np.linalg.norm(self.obs_dict["IFtip_approach"], axis=-1) - 0.030
+            np.linalg.norm(obs_dict["IFtip_approach"], axis=-1) - 0.030
         )
         TH_approach_dist = np.abs(
-            np.linalg.norm(self.obs_dict["THtip_approach"], axis=-1) - 0.030
+            np.linalg.norm(obs_dict["THtip_approach"], axis=-1) - 0.030
         )
         key_pos = (
             obs_dict["key_qpos"][:, :, 0]
@@ -126,7 +126,7 @@ class KeyTurnEnvV0(BaseV0):
             else obs_dict["key_qpos"][0]
         )
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -147,7 +147,12 @@ class KeyTurnEnvV0(BaseV0):
                 # Must keys
                 ("sparse", key_pos),
                 ("solved", obs_dict["key_qpos"] > self.goal_th),
-                ("done", (IF_approach_dist > far_th) or (TH_approach_dist > far_th)),
+                (
+                    "done",
+                    np.logical_or(
+                        IF_approach_dist > far_th, TH_approach_dist > far_th
+                    ),
+                ),
             )
         )
         rwd_dict["dense"] = np.sum(
@@ -156,6 +161,7 @@ class KeyTurnEnvV0(BaseV0):
         return rwd_dict
 
     def reset(self, reset_qpos=None, reset_qvel=None, **kwargs):
+        self._reseed_for_reset(kwargs)
         qpos = self.init_qpos.copy() if reset_qpos is None else reset_qpos
         qvel = self.init_qvel.copy() if reset_qvel is None else reset_qvel
         qpos[-1] = self.np_random.uniform(

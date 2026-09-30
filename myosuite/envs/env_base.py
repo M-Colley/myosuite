@@ -65,6 +65,7 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         # Seed and initialize the random number generator
         self.seed(seed)
         self.model_path = model_path
+        self.include_env_state = False
 
         self.mj_spec: Optional[mujoco.MjSpec] = None
         if isinstance(model_path, str):
@@ -582,7 +583,7 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         return self.get_visuals(**kwargs)
 
     # VIK??? Its getting called twice for mjrl agent. Once in step and sampler calls it as well
-    def get_env_infos(self):
+    def get_env_infos(self, include_state=None):
         """
         Get information about the environment.
         - NOTE: Returned dict contains pointers that will be updated by the env. Deepcopy returned data if you want it to persist
@@ -601,6 +602,9 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         else:
             visual_dict = {}
 
+        if include_state is None:
+            include_state = self.include_env_state
+
         env_info = {
             "time": self.obs_dict["time"][()],  # MDP(t)
             "rwd_dense": self.rwd_dict["dense"][()],  # MDP(t)
@@ -611,8 +615,9 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
             "visual_dict": visual_dict,  # MDP(t), will be {} if user hasn't explicitly updated self.visual_dict at the current time
             "proprio_dict": self.proprio_dict,  # MDP(t)
             "rwd_dict": self.rwd_dict,  # MDP(t)
-            "state": self.get_env_state(),  # MDP(t)
         }
+        if include_state:
+            env_info["state"] = self.get_env_state()
         return env_info
 
     def seed(self, seed=None):
@@ -621,7 +626,18 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         """
         self.input_seed = seed
         self.np_random, seed = seed_envs(seed)
+        if hasattr(self, "robot"):
+            self.robot.np_random = self.np_random
+        if hasattr(self, "muscle_fatigue"):
+            self.muscle_fatigue.seed(seed)
+        if hasattr(self, "ref") and hasattr(self.ref, "np_random"):
+            self.ref.np_random = self.np_random
         return [seed]
+
+    def _reseed_for_reset(self, kwargs):
+        seed = kwargs.pop("seed", None)
+        if seed is not None:
+            self.seed(seed)
 
     def get_input_seed(self):
         return self.input_seed
@@ -631,6 +647,8 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         Reset the environment (Default implemention provided).
         Override if env needs custom reset. Carefully handle return type for gym/gymnasium compatibility
         """
+        if seed is not None:
+            self.seed(seed)
         qpos = self.init_qpos.copy() if reset_qpos is None else reset_qpos
         qvel = self.init_qvel.copy() if reset_qvel is None else reset_qvel
         self.robot.reset(reset_pos=qpos, reset_vel=qvel, seed=seed, **kwargs)
@@ -709,6 +727,7 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
             qpos=qp,
             qvel=qv,
             act=act,
+            ctrl=self.mj_data.ctrl.copy(),
             mocap_pos=mocap_pos,
             mocap_quat=mocap_quat,
             site_pos=site_pos,
@@ -727,36 +746,38 @@ class MujocoEnv(gym.Env, gym.utils.EzPickle, ObsVecDict):
         qv = state_dict["qvel"]
         act = state_dict["act"] if "act" in state_dict.keys() else None
 
-        self.mj_data.time = time
-        self.mj_data.qpos[:] = qp
-        self.mj_data.qvel[:] = qv
-        if self.mj_model.na > 0:
-            self.mj_data.act[:] = act
+        data_models = (
+            (self.mj_model, self.mj_data),
+            (self.obsd_mj_model, self.obsd_mj_data),
+            (self.robot.mj_model, self.robot.mj_data),
+        )
+        restored_data = set()
+        restored_models = set()
+        for model, data in data_models:
+            if id(data) not in restored_data:
+                data.time = time
+                data.qpos[:] = qp
+                data.qvel[:] = qv
+                if model.na > 0 and act is not None:
+                    data.act[:] = act
+                if "ctrl" in state_dict:
+                    data.ctrl[:] = state_dict["ctrl"]
+                if model.nmocap > 0 and state_dict.get("mocap_pos") is not None:
+                    data.mocap_pos[:] = state_dict["mocap_pos"]
+                    data.mocap_quat[:] = state_dict["mocap_quat"]
+                restored_data.add(id(data))
+            if id(model) not in restored_models:
+                if model.nsite > 0 and state_dict.get("site_pos") is not None:
+                    model.site_pos[:] = state_dict["site_pos"]
+                    model.site_quat[:] = state_dict["site_quat"]
+                model.body_pos[:] = state_dict["body_pos"]
+                model.body_quat[:] = state_dict["body_quat"]
+                restored_models.add(id(model))
 
-        self.obsd_mj_data.time = time
-        self.obsd_mj_data.qpos[:] = qp
-        self.obsd_mj_data.qvel[:] = qv
-        if self.obsd_mj_model.na > 0:
-            self.obsd_mj_data.act[:] = act
-
-        if self.mj_model.nmocap > 0:
-            self.mj_data.mocap_pos[:] = state_dict["mocap_pos"]
-            self.mj_data.mocap_quat[:] = state_dict["mocap_quat"]
-            self.obsd_mj_data.mocap_pos[:] = state_dict["mocap_pos"]
-            self.obsd_mj_data.mocap_quat[:] = state_dict["mocap_quat"]
-        if self.mj_model.nsite > 0:
-            self.mj_model.site_pos[:] = state_dict["site_pos"]
-            self.mj_model.site_quat[:] = state_dict["site_quat"]
-            self.obsd_mj_model.site_pos[:] = state_dict["site_pos"]
-            self.obsd_mj_model.site_quat[:] = state_dict["site_quat"]
-        self.mj_model.body_pos[:] = state_dict["body_pos"]
-        self.mj_model.body_quat[:] = state_dict["body_quat"]
-
-        mujoco.mj_step(self.mj_model, self.mj_data)
-
-        self.obsd_mj_model.body_pos[:] = state_dict["body_pos"]
-        self.obsd_mj_model.body_quat[:] = state_dict["body_quat"]
-        mujoco.mj_step(self.obsd_mj_model, self.obsd_mj_data)
+        for model, data in data_models:
+            if id(data) in restored_data:
+                mujoco.mj_forward(model, data)
+                restored_data.remove(id(data))
 
     # Methods on paths =================================
 

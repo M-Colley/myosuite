@@ -326,6 +326,7 @@ class TrackEnv(BaseV0):
         return idxs[0] < self.ref.horizon - 1
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # print("Reset")
         self.ref.reset()
         obs = super().reset(

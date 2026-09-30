@@ -4,6 +4,7 @@ Source: https://github.com/vikashplus/robohive
 License: Under Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 """
 
+import ast
 import time
 from collections import deque
 
@@ -385,7 +386,9 @@ class Robot:
 
         prompt("Reading robot-configurations from %s" % config_path)
         with open(config_path, "r") as f:
-            robot_config = eval(f.read())
+            robot_config = ast.literal_eval(f.read())
+        if not isinstance(robot_config, dict):
+            raise ValueError("Robot configuration must contain a dictionary.")
 
         for name, device in robot_config.items():
             prompt("Configuring component %s" % name)
@@ -410,7 +413,7 @@ class Robot:
                     sensor["data_type"] = "qvel"
                     sensor["data_id"] = mj_model.jnt_dofadr[sensor_objid]
                 else:
-                    quit(
+                    raise ValueError(
                         "ERROR: Sensor {} has unsupported sensor_type: {}".format(
                             sensor["name"], sensor_type
                         )
@@ -427,9 +430,9 @@ class Robot:
                 actuator_trnid = mj_model.actuator_trnid[actuator["sim_id"], 0]
                 if actuator_trntype == 0:  # mjTRN_JOINT // force on joint
                     actuator["data_type"] = "qpos"
-                    actuator["data_id"] = mj_model.jnt_dofadr[actuator_trnid]
+                    actuator["data_id"] = mj_model.jnt_qposadr[actuator_trnid]
                 else:
-                    quit(
+                    raise ValueError(
                         "ERROR: actuator {} has unsupported transmission_type: {}".format(
                             actuator["name"], actuator_trntype
                         )
@@ -745,7 +748,7 @@ class Robot:
                             actuator["vel_range"][1] + actuator["vel_range"][0]
                         ) / 2.0
                         act_rng = (
-                            actuator["vel_range"][1] - actuator["pos_range"][0]
+                            actuator["vel_range"][1] - actuator["vel_range"][0]
                         ) / 2.0
                     else:
                         raise TypeError("Unknown act mode: {}".format(self._act_mode))

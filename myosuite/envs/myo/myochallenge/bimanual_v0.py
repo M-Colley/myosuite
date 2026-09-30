@@ -287,26 +287,19 @@ class BimanualEnvV1(BaseV0):
         reach_dist = np.abs(np.linalg.norm(obs_dict["reach_err"], axis=-1))
         pass_dist = np.abs(np.linalg.norm(obs_dict["pass_err"], axis=-1))
 
-        obj_pos = (
-            obs_dict["obj_pos"][0][0]
-            if obs_dict["obj_pos"].ndim == 3
-            else obs_dict["obj_pos"]
+        obj_pos = obs_dict["obj_pos"]
+        palm_pos = obs_dict["palm_pos"]
+        goal_pos = np.concatenate(
+            (
+                obs_dict["goal_pos"][..., :2],
+                np.full_like(obs_dict["goal_pos"][..., :1], self.PILLAR_HEIGHT),
+            ),
+            axis=-1,
         )
-        palm_pos = (
-            obs_dict["palm_pos"][0][0]
-            if obs_dict["palm_pos"].ndim == 3
-            else obs_dict["palm_pos"]
-        )
-        goal_pos = (
-            obs_dict["goal_pos"][0][0]
-            if obs_dict["goal_pos"].ndim == 3
-            else obs_dict["goal_pos"]
-        )
-        goal_pos = np.concatenate((goal_pos[:2], np.array([self.PILLAR_HEIGHT])))
 
         lift_height = np.linalg.norm(
-            np.array([[[obj_pos[-1], palm_pos[-1]]]])
-            - np.array([[[self.init_obj_z, self.init_palm_z]]]),
+            np.stack((obj_pos[..., -1], palm_pos[..., -1]), axis=-1)
+            - np.array([self.init_obj_z, self.init_palm_z]),
             axis=-1,
         )
         lift_height = 5 * np.exp(-10 * (lift_height - self.target_z) ** 2) - 5
@@ -326,17 +319,16 @@ class BimanualEnvV1(BaseV0):
             for fin in fin_keys
         )
 
-        elbow_err = 5 * np.exp(-10 * (obs_dict["elbow_fle"][0] - 1.0) ** 2) - 5
-        goal_dis = np.array([[np.abs(np.linalg.norm(obj_pos - goal_pos, axis=-1))]])
+        elbow_err = 5 * np.exp(-10 * (obs_dict["elbow_fle"][..., 0] - 1.0) ** 2) - 5
+        goal_dis = np.abs(np.linalg.norm(obj_pos - goal_pos, axis=-1))
 
-        touching_vec = (
-            obs_dict["touching_body"][0][0]
-            if obs_dict["touching_body"].ndim == 3
-            else obs_dict["touching_body"]
-        )
+        touching = obs_dict["touching_body"][..., 3] == 1
 
-        if touching_vec[3] == 1:
+        if obs_dict is self.obs_dict and np.any(touching):
             self.goal_touch += 1
+        solved = (goal_dis < self.proximity_th) & (
+            self.goal_touch >= self.TARGET_GOAL_TOUCH
+        )
         rwd_dict = collections.OrderedDict(
             (
                 # Optional Keys
@@ -353,12 +345,11 @@ class BimanualEnvV1(BaseV0):
                 # Must keys
                 ("sparse", 0),
                 ("goal_dist", goal_dis),
+                ("solved", solved),
                 (
-                    "solved",
-                    goal_dis < self.proximity_th
-                    and self.goal_touch >= self.TARGET_GOAL_TOUCH,
+                    "done",
+                    self._get_done(obj_pos[..., -1], obs_dict["time"], solved),
                 ),
-                ("done", self._get_done(obj_pos[-1])),
             )
         )
 
@@ -368,15 +359,8 @@ class BimanualEnvV1(BaseV0):
 
         return rwd_dict
 
-    def _get_done(self, z):
-        if self.obs_dict["time"] > MAX_TIME:
-            return 1
-        elif z < 0.3:
-            self.obs_dict["time"] = MAX_TIME
-            return 1
-        elif self.rwd_dict and self.rwd_dict["solved"]:
-            return 1
-        return 0
+    def _get_done(self, z, time, solved):
+        return np.logical_or.reduce((time[..., 0] > MAX_TIME, z < 0.3, solved))
 
     def step(self, a, **kwargs):
         # We unnormalize robotic actuators, muscle ones are handled in the parent implementation
@@ -439,6 +423,7 @@ class BimanualEnvV1(BaseV0):
         return metrics
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         self.start_pos = self.start_center + self.start_shifts * (
             2 * self.np_random.random(3) - 1
         )

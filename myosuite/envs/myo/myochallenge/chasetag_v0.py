@@ -632,22 +632,20 @@ class ChaseTagEnvV0(WalkEnvV0):
         with gym.register in myochallenge/__init__.py
         """
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
 
         # The task is entirely defined by these 3 lines
-        win_cdt = self._win_condition()
-        lose_cdt = self._lose_condition()
+        win_cdt = self._win_condition(obs_dict)
+        lose_cdt = self._lose_condition(obs_dict)
+        time = np.asarray(obs_dict["time"])[..., 0]
         if self.current_task.name == "CHASE":
-            score = self._get_score(float(self.obs_dict["time"])) if win_cdt else 0
-            self.obs_dict["time"] = self.maxTime if lose_cdt else self.obs_dict["time"]
+            score = np.where(win_cdt, self._get_score(time), 0)
         elif self.current_task.name == "EVADE":
-            score = (
-                self._get_score(float(self.obs_dict["time"]))
-                if (win_cdt or lose_cdt)
-                else 0
+            score = np.where(
+                np.logical_or(win_cdt, lose_cdt), self._get_score(time), 0
             )
         # ----------------------
 
@@ -669,7 +667,7 @@ class ChaseTagEnvV0(WalkEnvV0):
                 # Must keys
                 ("sparse", score),
                 ("solved", win_cdt),
-                ("done", self._get_done()),
+                ("done", self._get_done(obs_dict)),
             )
         )
         rwd_dict["dense"] = np.sum(
@@ -677,9 +675,12 @@ class ChaseTagEnvV0(WalkEnvV0):
         )
 
         # Success Indicator
-        self.mj_model.site_rgba[self.success_indicator_sid, :] = (
-            np.array([0, 2, 0, 0.2]) if rwd_dict["solved"] else np.array([2, 0, 0, 0])
-        )
+        if np.size(rwd_dict["solved"]) == 1:
+            self.mj_model.site_rgba[self.success_indicator_sid, :] = (
+                np.array([0, 2, 0, 0.2])
+                if bool(np.asarray(rwd_dict["solved"]).item())
+                else np.array([2, 0, 0, 0])
+            )
         return rwd_dict
 
     def get_metrics(self, paths):
@@ -707,6 +708,7 @@ class ChaseTagEnvV0(WalkEnvV0):
         return results
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         # randomized terrain types
         self._maybe_sample_terrain()
         # randomized tasks
@@ -835,66 +837,58 @@ class ChaseTagEnvV0(WalkEnvV0):
         self.tendon_len = np.array(self._get_tendon_lengthspring())
         self.musc_operating_len = np.array(self._get_muscle_operating_length())
 
-    def _get_done(self):
-        if self._lose_condition():
-            return 1
-        if self._win_condition():
-            return 1
-        return 0
+    def _get_done(self, obs_dict):
+        return np.logical_or(
+            self._lose_condition(obs_dict), self._win_condition(obs_dict)
+        )
 
-    def _win_condition(self):
+    def _win_condition(self, obs_dict):
         if self.current_task.name == "CHASE":
-            return self._chase_win_condition()
+            return self._chase_win_condition(obs_dict)
         elif self.current_task.name == "EVADE":
-            return self._evade_win_condition()
+            return self._evade_win_condition(obs_dict)
         else:
             raise NotImplementedError
 
-    def _lose_condition(self):
+    def _lose_condition(self, obs_dict):
         # falling on knees is always termination
-        if self._get_fallen_condition() and self.current_task.name == "CHASE":
-            return 1
         if self.current_task.name == "CHASE":
-            return self._chase_lose_condition()
+            return np.logical_or(
+                self._get_fallen_condition(), self._chase_lose_condition(obs_dict)
+            )
         elif self.current_task.name == "EVADE":
-            return self._evade_lose_condition()
+            return self._evade_lose_condition(obs_dict)
         else:
             raise NotImplementedError
 
-    def _chase_lose_condition(self):
-        root_pos = self.mj_data.body("pelvis").xpos[:2]
+    def _chase_lose_condition(self, obs_dict):
+        root_pos = obs_dict["model_root_pos"][..., :2]
         # didnt manage to tag
-        if self.obs_dict["time"] >= self.maxTime:
-            return 1
+        time_limit = np.asarray(obs_dict["time"])[..., 0] >= self.maxTime
         # out-of-bounds
-        if np.abs(root_pos[0]) > 6.5 or np.abs(root_pos[1]) > 6.5:
-            return 1
-        return 0
+        out_of_bounds = np.any(np.abs(root_pos) > 6.5, axis=-1)
+        return np.logical_or(time_limit, out_of_bounds)
 
-    def _evade_lose_condition(self):
-        root_pos = self.mj_data.body("pelvis").xpos[:2]
-        opp_pos = self.obs_dict["opponent_pose"][..., :2]
+    def _evade_lose_condition(self, obs_dict):
+        root_pos = obs_dict["model_root_pos"][..., :2]
+        opp_pos = obs_dict["opponent_pose"][..., :2]
 
         # got caught
-        if np.linalg.norm(root_pos - opp_pos) <= self.win_distance and self.startFlag:
-            return 1
+        caught = (np.linalg.norm(root_pos - opp_pos, axis=-1) <= self.win_distance) & self.startFlag
         # out-of-bounds
-        if np.abs(root_pos[0]) > 6.5 or np.abs(root_pos[1]) > 6.5:
-            return 1
-        return 0
+        out_of_bounds = np.any(np.abs(root_pos) > 6.5, axis=-1)
+        return np.logical_or(caught, out_of_bounds)
 
-    def _chase_win_condition(self):
-        root_pos = self.mj_data.body("pelvis").xpos[:2]
-        opp_pos = self.obs_dict["opponent_pose"][..., :2]
-        if np.linalg.norm(root_pos - opp_pos) <= self.win_distance and self.startFlag:
-            return 1
-        return 0
+    def _chase_win_condition(self, obs_dict):
+        root_pos = obs_dict["model_root_pos"][..., :2]
+        opp_pos = obs_dict["opponent_pose"][..., :2]
+        return (
+            np.linalg.norm(root_pos - opp_pos, axis=-1) <= self.win_distance
+        ) & self.startFlag
 
-    def _evade_win_condition(self):
+    def _evade_win_condition(self, obs_dict):
         # evade long enough
-        if self.obs_dict["time"] >= self.maxTime:
-            return 1
-        return 0
+        return np.asarray(obs_dict["time"])[..., 0] >= self.maxTime
 
     # Helper functions
     def _get_body_mass(self):

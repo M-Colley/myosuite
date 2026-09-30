@@ -218,7 +218,7 @@ class BaodingEnvV1(BaseV0):
         target1_dist = np.linalg.norm(obs_dict["target1_err"], axis=-1)
         target2_dist = np.linalg.norm(obs_dict["target2_err"], axis=-1)
         target_dist = target1_dist + target2_dist
-        act_mag = np.linalg.norm(self.obs_dict["act"], axis=-1)
+        act_mag = np.linalg.norm(obs_dict["act"], axis=-1)
         if self.mj_model.na != 0:
             act_mag = act_mag / self.mj_model.na
 
@@ -332,6 +332,7 @@ class BaodingEnvV1(BaseV0):
         time_period=None,
         **kwargs,
     ):
+        self._reseed_for_reset(kwargs)
         # reset task
         if self.task_choice == "random":
             self.which_task = self.np_random.choice(Task)

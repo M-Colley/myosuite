@@ -137,10 +137,10 @@ class ReorientEnvV0(BaseV0):
         return obs_dict
 
     def get_reward_dict(self, obs_dict):
-        pos_dist = np.abs(np.linalg.norm(self.obs_dict["pos_err"], axis=-1))
-        rot_dist = np.abs(np.linalg.norm(self.obs_dict["rot_err"], axis=-1))
+        pos_dist = np.abs(np.linalg.norm(obs_dict["pos_err"], axis=-1))
+        rot_dist = np.abs(np.linalg.norm(obs_dict["rot_err"], axis=-1))
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
@@ -166,8 +166,8 @@ class ReorientEnvV0(BaseV0):
                 (
                     "solved",
                     (pos_dist < self.pos_th)
-                    and (rot_dist < self.rot_th)
-                    and (not drop),
+                    & (rot_dist < self.rot_th)
+                    & ~drop,
                 ),
                 ("done", drop),
             )
@@ -208,6 +208,7 @@ class ReorientEnvV0(BaseV0):
         return metrics
 
     def reset(self, reset_qpos=None, reset_qvel=None, **kwargs):
+        self._reseed_for_reset(kwargs)
         self.mj_model.body_pos[self.goal_bid] = (
             self.goal_init_pos
             + self.np_random.uniform(

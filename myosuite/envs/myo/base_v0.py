@@ -118,6 +118,7 @@ class BaseV0(env_base.MujocoEnv):
         return self.forward(**kwargs)
 
     def reset(self, fatigue_reset=True, *args, **kwargs):
+        self._reseed_for_reset(kwargs)
         if fatigue_reset:
             if self.muscle_condition == "fatigue":
                 self.muscle_fatigue.reset(

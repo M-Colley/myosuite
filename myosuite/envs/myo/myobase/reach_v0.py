@@ -101,16 +101,12 @@ class ReachEnvV0(BaseV0):
             obs_dict["act"] = mj_data.act[:].copy()
 
         # reach error
-        obs_dict["tip_pos"] = np.array([])
-        obs_dict["target_pos"] = np.array([])
-        for isite in range(len(self.tip_sids)):
-            obs_dict["tip_pos"] = np.append(
-                obs_dict["tip_pos"], mj_data.site_xpos[self.tip_sids[isite]].copy()
-            )
-            obs_dict["target_pos"] = np.append(
-                obs_dict["target_pos"],
-                mj_data.site_xpos[self.target_sids[isite]].copy(),
-            )
+        obs_dict["tip_pos"] = np.concatenate(
+            [mj_data.site_xpos[sid].copy() for sid in self.tip_sids]
+        )
+        obs_dict["target_pos"] = np.concatenate(
+            [mj_data.site_xpos[sid].copy() for sid in self.target_sids]
+        )
         obs_dict["reach_err"] = np.array(obs_dict["target_pos"]) - np.array(
             obs_dict["tip_pos"]
         )
@@ -119,14 +115,14 @@ class ReachEnvV0(BaseV0):
     def get_reward_dict(self, obs_dict):
         reach_dist = np.linalg.norm(obs_dict["reach_err"], axis=-1)
         act_mag = (
-            np.linalg.norm(self.obs_dict["act"], axis=-1) / self.mj_model.na
+            np.linalg.norm(obs_dict["act"], axis=-1) / self.mj_model.na
             if self.mj_model.na != 0
             else 0
         )
-        far_th = (
-            self.far_th * len(self.tip_sids)
-            if np.squeeze(obs_dict["time"]) > 2 * self.dt
-            else np.inf
+        far_th = np.where(
+            np.squeeze(obs_dict["time"], axis=-1) > 2 * self.dt,
+            self.far_th * len(self.tip_sids),
+            np.inf,
         )
         near_th = len(self.tip_sids) * 0.0125
         rwd_dict = collections.OrderedDict(
@@ -160,6 +156,7 @@ class ReachEnvV0(BaseV0):
         mujoco.mj_forward(self.mj_model, self.mj_data)
 
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
         self.generate_target_pose()
         self.robot.sync_sims(
             self.mj_model, self.mj_data, self.obsd_mj_model, self.obsd_mj_data

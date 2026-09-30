@@ -112,7 +112,7 @@ class PoseEnvV0(BaseV0):
 
     def get_reward_dict(self, obs_dict):
         pose_dist = np.linalg.norm(obs_dict["pose_err"], axis=-1)
-        act_mag = np.linalg.norm(self.obs_dict["act"], axis=-1)
+        act_mag = np.linalg.norm(obs_dict["act"], axis=-1)
         if self.mj_model.na != 0:
             act_mag = act_mag / self.mj_model.na
         far_th = 4 * np.pi / 2
@@ -172,6 +172,7 @@ class PoseEnvV0(BaseV0):
     # reset_type = none; init; random
     # target_type = generate; switch
     def reset(self, **kwargs):
+        self._reseed_for_reset(kwargs)
 
         # udpate wegith
         if self.weight_bodyname is not None:

@@ -321,16 +321,15 @@ class RunTrack(WalkEnvV0):
         """
         # act_mag = np.linalg.norm(self.obs_dict['act'], axis=-1)/self.mj_model.na if self.mj_model.na !=0 else 0
         act_mag = (
-            np.mean(np.square(self.obs_dict["act"])) if self.mj_model.na != 0 else 0
+            np.mean(np.square(obs_dict["act"]), axis=-1)
+            if self.mj_model.na != 0
+            else 0
         )
         pain = self.get_pain()
 
-        # The task is entirely defined by these 3 lines
-        score = self.get_score()
-        win_cdt = self._win_condition()
-        lose_cdt = self._lose_condition()
-
-        self.obs_dict["time"] = self.maxTime if lose_cdt else self.obs_dict["time"]
+        score = self.get_score(obs_dict)
+        win_cdt = self._win_condition(obs_dict)
+        lose_cdt = self._lose_condition(obs_dict)
 
         rwd_dict = collections.OrderedDict(
             (
@@ -344,7 +343,7 @@ class RunTrack(WalkEnvV0):
                 # Must keys
                 ("sparse", score),
                 ("solved", win_cdt),
-                ("done", self._get_done()),
+                ("done", self._get_done(obs_dict)),
             )
         )
         rwd_dict["dense"] = np.sum(
@@ -393,6 +392,7 @@ class RunTrack(WalkEnvV0):
         return results
 
     def reset(self, OSL_params=None, **kwargs):
+        self._reseed_for_reset(kwargs)
 
         if OSL_params is not None:
             self.upload_osl_param(OSL_params)
@@ -542,29 +542,21 @@ class RunTrack(WalkEnvV0):
         self.tendon_len = np.array(self._get_tendon_lengthspring())
         self.musc_operating_len = np.array(self._get_muscle_operating_length())
 
-    def _get_done(self):
-        if self._lose_condition():
-            return 1
-        if self._win_condition():
-            return 1
-        return 0
+    def _get_done(self, obs_dict):
+        return np.logical_or(
+            self._lose_condition(obs_dict), self._win_condition(obs_dict)
+        )
 
-    def _win_condition(self):
-        y_pos = self.obs_dict["model_root_pos"].squeeze()[1]
-        if y_pos < self.end_pos:
-            return 1
-        return 0
+    def _win_condition(self, obs_dict):
+        y_pos = obs_dict["model_root_pos"][..., 1]
+        return y_pos < self.end_pos
 
-    def _lose_condition(self):
-        x_pos = self.obs_dict["model_root_pos"].squeeze()[0]
-        y_pos = self.obs_dict["model_root_pos"].squeeze()[1]
-        if x_pos > self.real_width or x_pos < -self.real_width:
-            return 1
-        if y_pos > self.start_pos + 2:
-            return 1
-        if self._get_fallen_condition():
-            return 1
-        return 0
+    def _lose_condition(self, obs_dict):
+        root_pos = obs_dict["model_root_pos"]
+        out_of_bounds = (np.abs(root_pos[..., 0]) > self.real_width) | (
+            root_pos[..., 1] > self.start_pos + 2
+        )
+        return np.logical_or(out_of_bounds, self._get_fallen_condition())
 
     def _get_fallen_condition(self):
         """
@@ -593,14 +585,14 @@ class RunTrack(WalkEnvV0):
         """
         return self.mj_model.body("root").subtreemass
 
-    def get_score(self):
+    def get_score(self, obs_dict):
         """
         Score is the negative velocity in the y direction, which makes the humanoid run forward.
         """
         # initial environment needs to be setup for self.horizon to work
         if not self.startFlag:
             return -1
-        vel = self.obs_dict["model_root_vel"].squeeze()[1]
+        vel = obs_dict["model_root_vel"][..., 1]
 
         return -vel.squeeze()
 
