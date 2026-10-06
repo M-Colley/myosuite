@@ -346,6 +346,21 @@ def test_wrapped_env_survives_pickle_and_deepcopy() -> None:
         np.testing.assert_array_equal(_rollout(clone, 0), _rollout(env, 0))
 
 
+def test_set_motor_noise_reaches_the_wrapper_under_others() -> None:
+    """``set_motor_noise`` is forwarded; assigning ``env.motor_noise`` on an outer wrapper is not."""
+    env = FatigueWrapper(MotorNoiseWrapper(make_env(_ELBOW)))
+    quiet = _rollout(env, 0)
+    env.set_motor_noise({"constant_std": 0.05})
+    assert env.env.motor_noise == MotorNoiseCfg(constant_std=0.05)
+    assert not np.array_equal(_rollout(env, 0), quiet)
+    env.set_motor_noise(None)
+    np.testing.assert_array_equal(_rollout(env, 0), quiet)
+    # a plain gymnasium wrapper on top: reach the method with get_wrapper_attr
+    stats = gym.wrappers.RecordEpisodeStatistics(env)
+    stats.get_wrapper_attr("set_motor_noise")({"constant_std": 0.05})
+    assert env.env.motor_noise.enabled
+
+
 # ── custom stages ────────────────────────────────────────────────────────────
 
 _CALLS: list[str] = []
@@ -415,18 +430,44 @@ def test_custom_stage_validation() -> None:
         env.unwrapped.add_ctrl_stage("fatigue", _record("f"), order=99)
 
 
-def test_same_order_warns_prominently_and_runs_in_name_order() -> None:
+def test_custom_stages_default_to_after_the_builtins_in_installation_order() -> None:
+    import warnings
+
+    from myosuite.envs.wrappers import CtrlStageWrapper
+
+    _CALLS.clear()
+    env = make_env(_ELBOW)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no StageOrderWarning without explicit orders
+        env = CtrlStageWrapper(env, _record("second"), name="second")
+        env = CtrlStageWrapper(env, _record("first"), name="first")
+        env = CtrlStageWrapper(env, _record("early"), name="early", order=15)
+        env = FatigueWrapper(MotorNoiseWrapper(env, {"constant_std": 0.01}))
+    # built-ins in their fixed order, custom stages after them in installation order
+    assert env.unwrapped.ctrl_stages == (
+        "early",
+        "noise",
+        "fatigue",
+        "second",
+        "first",
+    )
+    env.reset(seed=0)
+    env.step(np.zeros(env.action_space.shape, np.float32))
+    assert _CALLS == ["early", "second", "first"]
+
+
+def test_same_order_warns_prominently_and_runs_in_installation_order() -> None:
     from myosuite.envs.muscle_stages import StageOrderWarning
     from myosuite.envs.wrappers import CtrlStageWrapper
 
     _CALLS.clear()
     env = CtrlStageWrapper(make_env(_ELBOW), _record("b"), name="b", order=25)
-    with pytest.warns(StageOrderWarning, match="STAGE ORDER CLASH.*'a', 'b'.*order 25"):
+    with pytest.warns(StageOrderWarning, match="STAGE ORDER CLASH.*'b', 'a'.*order 25"):
         env = CtrlStageWrapper(env, _record("a"), name="a", order=25)
-    assert env.unwrapped.ctrl_stages == ("a", "b")
+    assert env.unwrapped.ctrl_stages == ("b", "a")
     env.reset(seed=0)
     env.step(np.zeros(env.action_space.shape, np.float32))
-    assert _CALLS == ["a", "b"]
+    assert _CALLS == ["b", "a"]
     # the clash with a built-in stage warns as well
     with pytest.warns(StageOrderWarning, match="noise"):
         MotorNoiseWrapper(
@@ -473,6 +514,24 @@ def test_low_pass_stage_on_the_cpu_env() -> None:
     env.reset(seed=0)
     env.step(lo)  # the filter state was reset
     np.testing.assert_allclose(base.data.ctrl[idx], u_lo, rtol=1e-5)
+
+
+def test_low_pass_stage_keeps_its_state_on_the_input_device() -> None:
+    """The filter state lives on the excitations' device (CUDA on the GPU twin).
+
+    ``meta`` stands in for CUDA where no GPU is present: a CPU-side flag fails on it the
+    same way.
+    """
+    torch = pytest.importorskip("torch")
+    from myosuite.envs.muscle_stages import LowPassStage
+
+    for device in ("meta", *(("cuda",) if torch.cuda.is_available() else ())):
+        stage = LowPassStage(0.5)
+        u = torch.rand(3, 6, device=device)
+        stage(u, torch)
+        stage.reset(torch.tensor([1], device=device))
+        stage(u, torch)
+        assert stage._y.device == stage._fresh.device == u.device
 
 
 def test_excitation_stage_name_and_pickle() -> None:

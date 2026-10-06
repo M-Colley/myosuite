@@ -88,16 +88,18 @@ spec. Constructor kwargs `muscle_condition`, `fatigue_reset_vec`, `fatigue_reset
 register the matching wrapper, and noise additionally needs a nonzero level.
 
 Each wrapper installs one **stage** in the env's action pipeline
-(`myosuite.envs.muscle_stages.CtrlStageHost.add_ctrl_stage`). The stages run by numeric priority, set by
-the stage and not by the wrapping order:
+(`myosuite.envs.muscle_stages.CtrlStageHost.add_ctrl_stage`). The three built-in stages run in a fixed
+order, set by the stage and not by the wrapping order; custom stages run after them:
 
 ```
 clip action -> env map (10: sigmoid, or as-is for the walk envs, or clipped ctrl when
-normalize_act=False) -> noise (20) -> fatigue (30) -> reroute (40, reafferentation) -> ctrl (100)
+normalize_act=False) -> noise (20) -> fatigue (30) -> reroute (40, reafferentation)
+-> custom stages -> ctrl (100)
 ```
 
-**Custom stages.** Two kinds, both at any order strictly between 10 and 100 (before, between or after the built-in
-ones):
+**Custom stages.** Two kinds. Both run after the built-in stages, in the order they were installed (the wrapping
+order, or the order of `EnvConfig.features` / the registered wrappers), so there is nothing to configure. To insert one
+earlier, pass an explicit `order` strictly between 10 and 100 (for example 25: after noise, before fatigue):
 
 - **Portable:** subclass `ExcitationStage` (`__call__(u, xp)` on the muscle excitations, written for numpy and torch;
   `reset(env_ids)` for state; `LowPassStage` is the shipped example, a first-order filter) and add it with `ExcitationStageWrapper(env, factory)`. A CPU env runs
@@ -105,11 +107,11 @@ ones):
   `cpu_reference.action_cfg` into `MyoActionCfg.excitation_stages`) and runs it with torch on `(n_envs, n_muscles)`.
   The factory must be a module-level callable (class or `functools.partial`) because the wrapped env is pickled by some
   tools. The CPU and the twin agree in `tests/test_motor_noise_mjlab.py`.
-- **Env-aware, CPU only:** `CtrlStageWrapper(env, apply, name=..., order=...)` with `apply(env, ctrl) -> ctrl`
+- **Env-aware, CPU only:** `CtrlStageWrapper(env, apply, name=..., order=None)` with `apply(env, ctrl) -> ctrl`
   (it gets the host env, so it cannot run on mjlab).
 
-Two stages with the **same order** run in name order and raise a `StageOrderWarning` on either backend (also for a
-clash with a built-in order): give every custom stage its own order. To act on the raw `[-1, 1]` action (a delay, say),
+Two stages with the same **explicit** order run in installation order and raise a `StageOrderWarning` on either backend
+(also for a clash with a built-in order); stages without an order never clash. To act on the raw `[-1, 1]` action (a delay, say),
 use a plain `gym.ActionWrapper` on the outside instead.
 
 mjlab applies the same order in `MyoAction`; `cpu_reference.action_cfg` builds it from the
@@ -121,7 +123,7 @@ raises a `TypeError` (for example MuscleMimic). A `TaskConfig` holds the task on
 other id. A stage is installed **once per env**: a second wrapper of the same kind, or one on an id that
 already registers it (`FatigueWrapper` on `myoFati*`, `ReafferentationWrapper` on `myoReaf*`), raises a `ValueError`;
 `SarcopeniaWrapper` raises it if sarcopenia is already applied to the model (it would scale the forces twice). Wrap the
-base id, or change the installed wrapper's options (`env.motor_noise`, `env.set_fatigue_reset_random(...)`).
+base id, or change the installed wrapper's options (`env.set_motor_noise(...)`, `env.set_fatigue_reset_random(...)`).
 
 ### One call for every backend: `make_env(EnvConfig(...))`
 
@@ -212,7 +214,7 @@ human motor noise to muscle excitations. `MotorNoiseCfg.van_beers_2004()` gives 
   every episode is reseeded. mjlab: `torch.randn` on the sim device from the global torch RNG
   that mjlab seeds (`seed_rng`). The two backends agree in distribution, not sample by sample.
 - **Configuration.** `MotorNoiseWrapper(env, MotorNoiseCfg.van_beers_2004())` on CPU (a cfg or a
-  dict of its fields; assign `env.motor_noise` to change the levels). To configure both backends,
+  dict of its fields; `env.set_motor_noise(...)` changes the levels). To configure both backends,
   register an env id with a `MotorNoiseWrapper` spec: the twin reads it through
   `cpu_reference.action_cfg`. For one mjlab config, set `env_cfg.actions["muscles"].motor_noise`.
 - **Clipping.** Near the bounds the clip rectifies the noise: at `u = 0.076` (policy output 0

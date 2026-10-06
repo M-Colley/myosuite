@@ -27,12 +27,13 @@ None of them is active by default (a plain env runs only its own map): the
 noise additionally needs a nonzero level. These install one ordered stage in the
 env's action pipeline (see
 :mod:`myosuite.envs.muscle_stages`): ``map (env) -> noise -> fatigue -> reroute
--> ctrl``. The order is fixed by the stage, whatever the wrapping order. Each
+-> custom stages -> ctrl``. The built-in order is fixed by the stage, whatever the wrapping
+order; custom stages run after them in installation order. Each
 stage can be installed **once per env**: a second wrapper of the same kind raises a
 ``ValueError`` (the ``myoFati*`` and ``myoReaf*`` ids already contain theirs, so
 wrap the base id to configure it, e.g. ``FatigueWrapper(make_env(base_id),
 fatigue_reset_random=True)``, or change the options with
-``env.set_fatigue_reset_random(...)`` / ``env.motor_noise = ...``).
+``env.set_fatigue_reset_random(...)`` / ``env.set_motor_noise(...)``).
 
 :class:`MotorNoiseWrapper`
     Signal-dependent + constant Gaussian noise on the muscle excitations.
@@ -362,8 +363,8 @@ class MotorNoiseWrapper(
     Args:
         env: Env whose pipeline runs muscle stages.
         motor_noise: A :class:`~myosuite.terms.base_action.MotorNoiseCfg`, a dict
-            of its fields or ``None`` (off). Assign ``env.motor_noise`` to change
-            the levels during a run.
+            of its fields or ``None`` (off). Call ``env.set_motor_noise(...)`` to
+            change the levels during a run.
     """
 
     def __init__(self, env: gym.Env, motor_noise: Any = None) -> None:
@@ -378,6 +379,16 @@ class MotorNoiseWrapper(
 
     def _pickle_kwargs(self) -> dict[str, Any]:
         return {"motor_noise": self.motor_noise}
+
+    def set_motor_noise(self, motor_noise: Any) -> None:
+        """Change the noise levels (a cfg, a dict of its fields or ``None``: off).
+
+        Unlike assigning ``env.motor_noise``, which only reaches this wrapper when it
+        is the outermost one, the call is forwarded through the wrappers on top.
+        """
+        from myosuite.terms.base_action import MotorNoiseCfg  # noqa: PLC0415
+
+        self.motor_noise = MotorNoiseCfg.from_value(motor_noise)
 
 
 class FatigueWrapper(
@@ -492,10 +503,11 @@ class ExcitationStageWrapper(
     """A portable custom stage on the muscle excitations: CPU env and mjlab twin.
 
     The stage is an :class:`~myosuite.envs.muscle_stages.ExcitationStage` (its ``name``
-    and ``order`` say where it runs, see :class:`CtrlStageWrapper` for the order scale).
+    and optional ``order`` say where it runs: by default after the built-in stages, in
+    installation order; see :class:`CtrlStageWrapper` for the order scale).
     It sees the muscle excitations only and is written for numpy and torch, so the same
     registration configures both backends: the mjlab twin builds the stage from the same
-    factory for every env of the scene. Two stages with the same order raise a
+    factory for every env of the scene. Two stages with the same explicit order raise a
     :class:`~myosuite.envs.muscle_stages.StageOrderWarning`.
 
     Example::
@@ -539,16 +551,17 @@ class ExcitationStageWrapper(
 class CtrlStageWrapper(
     _PicklableStage, _ForwardPublicAttributes, RecordConstructorArgs, gym.Wrapper
 ):
-    """An env-aware custom stage on the muscle excitations (CPU only), at an order of your choice.
+    """An env-aware custom stage on the muscle excitations (CPU only).
 
-    The stage runs after the env's action-to-excitation map and before ``ctrl`` is
-    written, between the built-in stages according to its ``order`` (noise 20, fatigue
-    30, reroute 40; the env's map is 10 and the ``ctrl`` write 100). To act on the raw
-    ``[-1, 1]`` action instead, use a plain ``gym.ActionWrapper`` on the outside.
+    The stage runs after the env's action-to-excitation map and the built-in stages
+    (noise 20, fatigue 30, reroute 40), right before ``ctrl`` is written, in the order the
+    custom stages were installed. To insert it earlier give it an explicit ``order`` (the
+    env's map is 10 and the ``ctrl`` write 100). To act on the raw ``[-1, 1]`` action
+    instead, use a plain ``gym.ActionWrapper`` on the outside.
 
-    Two stages with the same order run in name order and raise a
-    :class:`~myosuite.envs.muscle_stages.StageOrderWarning`: give every custom stage its
-    own order. This stage gets the host env and so runs on the CPU only; for a stage that
+    Two stages with the same explicit order run in installation order and raise a
+    :class:`~myosuite.envs.muscle_stages.StageOrderWarning`. This stage gets the host
+    env and so runs on the CPU only; for a stage that
     also runs on the mjlab twin, write an
     :class:`~myosuite.envs.muscle_stages.ExcitationStage` and use
     :class:`ExcitationStageWrapper`.
@@ -561,7 +574,7 @@ class CtrlStageWrapper(
             return ctrl
 
         env = CtrlStageWrapper(make_env("myoElbowPose1D6MRandom-v0"), rate_limit,
-                               name="cap", order=25)  # after noise, before fatigue
+                               name="cap")  # after the built-in stages; order=25 puts it after noise
 
     Args:
         env: Env whose pipeline runs muscle stages.
@@ -569,12 +582,13 @@ class CtrlStageWrapper(
             (edit it in place or return a new one). Use a module-level function so that
             the wrapped env can be pickled.
         name: A unique stage name (not one of the built-in names).
-        order: Priority, strictly between 10 and 100.
+        order: ``None`` (default): after the built-in stages, in installation order; or a
+            priority strictly between 10 and 100 to insert it earlier.
         reset: Optional ``reset(env)`` called where the env resets its muscle state.
 
     Raises:
-        ValueError: If the name is built-in or already installed, or the order is
-            out of range.
+        ValueError: If the name is built-in or already installed, or an explicit order
+            is out of range.
     """
 
     def __init__(
@@ -582,7 +596,7 @@ class CtrlStageWrapper(
         env: gym.Env,
         apply: muscle_stages.CtrlStage,
         name: str,
-        order: float,
+        order: float | None = None,
         reset: muscle_stages.ResetStage | None = None,
     ) -> None:
         RecordConstructorArgs.__init__(
