@@ -62,7 +62,10 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from myosuite.core.muscle_conditions import _peak_force
-from myosuite.core.retargeting import retarget
+def retarget(*args, **kwargs):  # bisect: lazy, keeps mink out of the mjlab import chain
+    from myosuite.core.retargeting import retarget as _retarget
+
+    return _retarget(*args, **kwargs)
 from myosuite.integrations.opensim_interop import _read_opensim_scales, _segments_for
 
 _ORIENT = mujoco.mjtOrientation
