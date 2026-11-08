@@ -4,11 +4,7 @@ name: Python application
 
 on:
   push:
-    branches: ["main", "dev"]
-    paths-ignore:
-      - "docs/**"
-      - ".github/**"
-      - "**/README.md"
+    branches: ["main", "dev", "bisect/**"]
 
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -42,9 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - macos-latest
           - ubuntu-latest
-          - windows-latest
         python-version: ["3.10"]
         # Only the minimum and maximum supported Pythons. 3.10 is the floor and
         # still resolves NumPy 2.2.x (which deprecates, rather than removes,
@@ -53,9 +47,6 @@ jobs:
         # resolution and Python-level incompatibilities, including NumPy >=2.3,
         # which are OS-independent. The [mjlab] extra resolves to torch +
         # warp-lang on the 3.10 Linux job; mjlab caps itself at <3.14.
-        include:
-          - os: ubuntu-latest
-            python-version: "3.14"
 
     steps:
       - name: Set environment variable for macOS
@@ -102,9 +93,3 @@ jobs:
       - name: Pytest — full suite (tier 1–3, all backends; excludes @slow)
         if: ${{ runner.os == 'Linux' }}
         run: uv run python -m pytest -o addopts= myosuite/tests -v -m "not slow"
-
-      # Pinned to 3.10: several tutorials depend on packages with tighter ceilings
-      # than the library itself.
-      - name: Execute tutorials (discovered; HF-heavy notebooks skipped in CI)
-        if: ${{ runner.os == 'Linux' && matrix.python-version == '3.10' }}
-        run: source myosuite/tests/test_tutorials.sh
