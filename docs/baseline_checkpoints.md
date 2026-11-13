@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+On every CPU env, a step on which MuJoCo reset a diverged simulation no longer pays a positive reward or counts as `solved`, and `info["mj_unstable"]` marks it. Observations, actions, dynamics and the rewards of regular steps are unchanged, so checkpoints load and score as before; only evaluations that contained a diverged episode change (the ChaseTag envs counted such an episode as a win).
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
