@@ -13,6 +13,12 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* Tutorial 3.3 (inverse dynamics) assigns the reference trajectory to the hand's joints by name. The CSV
+  lists `cmc_abduction` before `cmc_flexion` and the model the other way round, so the positional read swapped
+  the two thumb CMC joints.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
