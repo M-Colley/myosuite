@@ -13,6 +13,12 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* `myosuite.biomechanics.uncertainty.perturbed_model` scales the passive peak force only where the bias is a
+  muscle bias. For `gaintype="muscle"` with an affine bias it had replaced the velocity coefficient
+  (`biasprm="0 0 -10"` became 0), also with `strength_cv=0`, so every sample dropped that damping term.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
