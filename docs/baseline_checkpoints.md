@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+`myoFullBodyWalkSAR-v0` (mjlab only, tutorial 5.5) now rewards the root velocity along the body's heading. Up to 3.1.0 it rewarded world `+y`, which is backwards for the MuscleMimic full body, so a policy trained before this change walks backwards: retrain it. Observations, actions and dynamics are unchanged, so such a policy still loads. No checkpoint of this id is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.

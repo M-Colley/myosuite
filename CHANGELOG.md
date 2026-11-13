@@ -13,6 +13,16 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* **`myoFullBodyWalkSAR-v0` rewards walking forwards.** The forward-velocity term tracked the root's world `+y`
+  velocity, but the MuscleMimic full body faces `-y` (heel to toe is `(0, -1, 0)` at the keyframe), so the reward
+  peaked for walking backwards: at the 1.2 m/s target it paid 5 x 0.003 forwards and 5 x 1.0 backwards. It now tracks
+  the root velocity along the body's heading (the pelvis' anterior axis, read from the model, turned by the root
+  yaw) instead of a fixed world axis. Observations and actions are unchanged; policies trained on the old reward walk
+  backwards and score low on the new one. Tutorial 5.5's random-action comparison reports displacement along the
+  same direction.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
