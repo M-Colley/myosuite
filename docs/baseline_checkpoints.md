@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+In `myoChallengeChaseTagP2-v0`, `myoChallengeChaseTagP2eval-v0` and their variants, the `opponent_vel` observation of EVADE episodes is the opponent's applied velocity (capped at 2 m/s and 2 rad/s) instead of its uncapped command. Dynamics and rewards are unchanged, but a policy trained on the old values sees different inputs in EVADE episodes; no checkpoint of these ids is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
