@@ -13,6 +13,14 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* DynSyn grouping (`training/dynsyn`, `python -m myosuite_dynsyn.groups`) puts the dependents of joint equalities on
+  their couplings after every random velocity draw. They had their own random velocities, so on `myoLegWalk-v0`
+  the knee translations left their range by up to 121 ranges and every knee-crossing muscle changed length
+  together: `bfsh_r` was grouped with `bflh_r`, `semimem_r` and `grac_r`, `sart_r` with `tfl_r`. Groups of models
+  with joint couplings change; DynSyn checkpoints keep the groups they recorded.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
