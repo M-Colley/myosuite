@@ -13,6 +13,14 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* `myoChallengeTableTennis*` keep the legacy 1280x1080 offscreen buffer on the CPU backend. `MjSpec.attach` dropped
+  the body spec's `visual` settings, so rendering above 640x480 raised `Image width 1280 > framebuffer width 640`.
+  Physics is unchanged; the recipe's docstring now says which bodies the legacy compiler bounds reach (six scaffold
+  bodies, not the hand bones or the ball, whose 7.2e-7 kg m^2 hollow-sphere inertia differs from the legacy model's
+  1e-4 floor).
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
