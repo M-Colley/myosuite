@@ -13,6 +13,15 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* **`info["obs_dict"]` keeps the values of its own step.** Die Reorient, Bimanual and TableTennis (21 ids with the
+  `myoSarc` / `myoFati` variants) put views of `MjData` into their observation dict (object, fingertip, ball and
+  paddle positions, `sensordata` slices). The arrays in a step's `info` changed at the next step, so a logged
+  rollout (`examine_policy`, code that keeps `info`) showed the final state at every step for these keys.
+  `MyoGymnasiumEnv._finalize_step` now stores copies of such views, for every env. Observations and rewards are
+  unchanged.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
