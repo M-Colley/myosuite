@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+`myoChallengeBimanual-v0` and its `myoSarc` / `myoFati` variants draw the box size on the first `reset()` of an env instance too; before, the first episode of every instance used the nominal box. An evaluation that builds a fresh env per episode now sees the size randomisation (10 %, 5 %, 10 % per axis), and a seeded first episode differs from 3.1.0. `get_metrics` counts a path with at least one solved step as a success (before: more than 5, which no episode could reach, so the score was always 0). Observations, actions and rewards are unchanged, and no checkpoint of these ids is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
