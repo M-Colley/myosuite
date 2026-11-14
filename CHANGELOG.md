@@ -13,6 +13,13 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* The site-tracking error of the MuscleMimic full-body playback (`myosuite-musclemimic-fullbody-eval`,
+  `PlaybackResult.mean_tracking_error`) and the SAR activation collector's episode filter match clip columns to
+  the model's mimic sites by name. They paired them by position, so a body posed exactly on the reference
+  reported 0.25 to 0.45 m. Activation sets collected with the old filter were selected by that number.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
