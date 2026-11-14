@@ -13,6 +13,12 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* `Trace.close()` and `Trace.save()` keep the recorded dtypes. They cast signed integers to int8 and floats to
+  float16 by default, so a step counter above 127 wrapped, values above 65504 became `inf` and actions kept three
+  significant digits (`examine_logs --save_paths`, `Trace.save(path)`). Pass `i_res` / `f_res` to down-cast.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
