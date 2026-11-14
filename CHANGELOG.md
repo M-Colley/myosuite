@@ -13,6 +13,14 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* `static_optimization_bands`: `joint_noise_deg` is the standard deviation of the joint-angle error that remains
+  after the analysis' low-pass filter. It was white per-frame noise, of which the filter keeps about
+  `sqrt(2 fc / fs)`, so the same motion gave narrower bands at a higher frame rate (torque band 0.52 N m at 100 Hz,
+  0.28 N m at 400 Hz for 0.5 deg at 6 Hz on the elbow). Bands for a given `joint_noise_deg` are now wider and do not
+  depend on the frame rate. New `joint_offset_deg` adds a constant error per sample and joint.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
