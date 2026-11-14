@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+`myoChallengeChaseTagFBP2-v0` (CPU and mjlab): the `rel_vel` slots of the `opponent_relative` observation block (indices 3-5 of the block) now hold the opponent's world-frame velocity minus the agent's, instead of the opponent's `[speed, turn rate, 0]` command minus the agent's velocity. Policies trained on the earlier FBP2 observation see different values in these three slots and should be fine-tuned or retrained; no FBP2 checkpoint is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
