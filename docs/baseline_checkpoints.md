@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+`myoChallengeDieReorientDemo/P1/P2-v0` and `myoChallengeRelocateP1/P2/P2eval-v0` (and their variants) compute the rotation error as the angle between the object and the goal, not as the norm of Euler-angle differences. Die Reorient success rates rise for policies that end near the goal (a die 0.05 rad off its goal was counted as failed for 9 % of the P2 goals), and the `rot_dist` reward changes on all six ids. Observations are unchanged, so checkpoints still load; reevaluate success rates and retrain reward-sensitive comparisons. No checkpoint of these ids is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
