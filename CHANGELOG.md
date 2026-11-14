@@ -13,6 +13,13 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* `ActuatorGroupSpec.normalize_actions` defaulted to `True` and its docstring promised a sigmoid on the action, but
+  neither the CPU `ModularTaskEnv` nor the mjlab twin applies one: `myoElbowPoseTask*` and `myoLegDirectional*`
+  write actions in [0, 1] to `ctrl` as they are. The field now defaults to `False`, the two specs no longer set it,
+  and `ModularTaskEnv` raises for `True` instead of ignoring it. No env changes behaviour.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
