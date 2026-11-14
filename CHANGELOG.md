@@ -13,6 +13,16 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* **`myoChallengeDieReorientP2-v0`: `reset(seed)` no longer depends on the previous episode** (also the `myoSarc` /
+  `myoFati` variants). The die's geom positions took their sign from the current `model.geom_pos`, which holds the
+  previous episode's resized die, as a ratio that is not exactly +-1. The same seed then gave geom positions that
+  differed by up to 4.5e-17 between a fresh and a reused env, and the contacts grew this into different rewards from
+  the second step. The sign now comes from the compiled positions, so a seeded episode is bit-identical on any
+  instance. Rollouts of the Die Reorient ids change at the 1e-13 level (in Demo and P1 the die geoms now sit exactly
+  at their compiled positions, up to 1e-16 away before).
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11

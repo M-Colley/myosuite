@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+The Die Reorient ids (`myoChallengeDieReorientDemo/P1/P2-v0` and variants) place the die geoms from their compiled positions at every reset, so a seeded episode no longer depends on the previous one. Positions move by at most 1e-16 and trajectories by about 1e-13: no checkpoint needs reevaluation.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
