@@ -13,6 +13,16 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* **Static optimization flags the frames OSQP did not solve.** `StaticOptimizer.solve` and `static_optimization`
+  stored OSQP's status but returned frames that stopped at `max_iter` (or with any other status than `"solved"`) as
+  ordinary results, without a warning: with `max_iter=1` every frame of a myoArm clip came back unconverged, with
+  activations up to 0.7 off the solved ones. `StaticOptimizationConfig.on_failure` now decides: `"warn"` (default)
+  keeps the solution and warns (`StaticOptimizationWarning`), once per clip with the number of failed frames and
+  their statuses; `"raise"` raises `StaticOptimizationError` naming the frame; `"nan"` returns NaN activations and
+  forces for those frames. Converged results are unchanged.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
