@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+`myoChallengeSoccerP1/P2-v0` and `myoChallengeBimanual-v0` (and their variants) end a time-out with `truncated=True, terminated=False`; Soccer episodes last 1000 steps (was 1001) and its time-out step pays `alive` instead of counting in `sparse`. Observations and the rewards of all other steps are unchanged; no checkpoint of these ids is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
