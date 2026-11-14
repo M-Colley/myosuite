@@ -13,6 +13,16 @@ Changes since **v3.1.0** (2026-11-11).
   CPU and mjlab. Cache keys track source contents, compiled models and preprocessing
   versions; execution settings leave task fingerprints unchanged ([#672]).
 
+### Fixed
+
+* The SAR activation collector (`collect_activations`, tutorial 5.5) ranks fixed-length episodes. Every episode
+  starts on the reference, so its tracking error grows from zero; with random starts running to the clip end the
+  shortest episodes, near the clip end, had the best mean and were the ones kept. Each step is now scored on
+  forwarded data against the clip frame it reached, fallen episodes (free root below `min_root_height`) are
+  rejected, and the first `warmup_steps` activations after the `act = 0` reset are left out.
+  `max_steps_per_episode` is now the length of every episode (default: half the clip). Activation caches built
+  before this change hold the biased selection: delete them.
+
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
 ## [3.1.0] - 2026-11-11
