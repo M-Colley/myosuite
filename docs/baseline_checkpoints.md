@@ -80,6 +80,8 @@ name walks in the opposite direction of the new one.
 
 CPU evaluations that pass a NumPy array as `FatigueWrapper.fatigue_reset_vec` now reuse the requested initial fatigue in every episode. Earlier versions mutated that array during stepping, which changed later episodes. Reevaluate checkpoints measured with this configuration.
 
+SAR tasks (`myoMimicFullbody-SAR-v0`, `myoMimicBimanual-SAR-v0`, their `myoMuscleMimic*` aliases and `myoFullBodyWalkSAR-v0`; mjlab only, tutorial 5.5): a policy action in `[-1, 1]` now spans the fitted synergy range. Up to 3.1.0 the synergies were scaled to `[0, 1]`, so action 0 was the lower edge of every synergy and negative actions lay below the data. Observation and action shapes are unchanged, so a SAR policy trained before this change still loads, but it decodes to other muscle activations: retrain it. Saved synergy models are rescaled when loaded and need no re-extraction. No SAR policy or synergy model is published here.
+
 ## Compatibility notes for 3.1.0
 
 What changes for checkpoints between MyoSuite 3.0.x and 3.1.0. The notes below the table give the details.
