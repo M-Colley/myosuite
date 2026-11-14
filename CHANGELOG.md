@@ -15,6 +15,15 @@ Changes since **v3.1.0** (2026-11-11).
 
 [#672]: https://github.com/MyoHub/myosuite/pull/672
 
+### Fixed
+
+* **`myoMimic-v0` envs reuse the in-memory motion library without re-reading the clips.** Every env checked the
+  metadata of and hashed every clip file (and five source modules) before it could find the library already in
+  memory: 167 ms for 48 clips of 369 kB here, several seconds for a 972-clip list, paid again by each env of a vector
+  env. The content key is now memoised on each file's size, modification time and inode, so a repeated load reads no
+  clip (14 ms for the same 48 clips); an edited clip gets a new stamp and is checked and hashed again. The library
+  and the disk cache are unchanged.
+
 ## [3.1.0] - 2026-11-11
 
 Changes since **v3.0.0** (2026-10-07). `git log v3.0.0..v3.1.0` has the full commit list.
