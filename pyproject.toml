@@ -72,6 +72,22 @@ mjx-cuda = [
     "MyoSuite[mjx]",
     "jax[cuda]>=0.4.20; python_version >= '3.10'",
 ]
+dreamerv3 = [
+    "dreamer @ git+https://github.com/M-Colley/dreamerv3.git@feat/myosuite-integration",
+    "jax>=0.4.33; python_version >= '3.10'",
+    "optax>=0.2.2",
+    "chex>=0.1.86",
+    "elements>=3.19.1",
+    "ninjax>=3.5.1",
+    "portal>=3.5.0",
+    "einops>=0.8.0",
+    "cloudpickle>=3.0.0",
+    "ruamel.yaml>=0.18.0",
+    "scope>=0.4.4",
+]
+dreamerv3-mjx = [
+    "MyoSuite[mjx,dreamerv3]",
+]
 docs = [
     "sphinx>=7.0",
     "sphinx-rtd-theme>=2.0",
