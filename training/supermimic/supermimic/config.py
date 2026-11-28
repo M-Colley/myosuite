@@ -194,6 +194,34 @@ class SuperMimicRunnerCfg(RslRlBaseRunnerCfg):
     gc_freeze: bool = True
     """gc.freeze() after setup: the garbage collector skips the objects of setup and compilation."""
 
+    # ---- NDM Gym options (github.com/Frank-ZY-Dou/ndm-gym, MIT): SuperTrack, RigidFormer, smooth targets ----
+    algo: Literal["supermimic", "supertrack"] = "supermimic"
+    """Training algorithm: ``supermimic`` (imagined return + critic) or ``supertrack`` (calibrated L1 tracking loss)."""
+    wm_kind: Literal["auto", "increment", "accel"] = "auto"
+    """World-model parameterization: ``auto`` chooses ``accel`` for ``supertrack`` and ``increment`` for ``supermimic``."""
+    wm_backbone: Literal["mlp", "rigidformer"] = "mlp"
+    """World-model backbone: ``mlp`` or ``rigidformer`` (body-token Transformer with 3D RoPE and tree-hop bias)."""
+    rf_dim: int = 128
+    """Token width of the ``rigidformer`` world-model backbone."""
+    rf_layers: int = 2
+    """Number of Transformer blocks in ``rigidformer``."""
+    rf_heads: int = 4
+    """Attention heads in ``rigidformer``."""
+    rf_registers: int = 2
+    """Register tokens in ``rigidformer``."""
+    rf_muscle_dim: int = 32
+    """Per-muscle encoder width pooled onto attached body tokens in ``rigidformer``."""
+    target_rate_w: float = 0.0
+    """Smooth-target penalty weight on squared step-to-step excitation changes ``((a_t - a_{t-1}) / 0.5)^2``."""
+    st_balance_w: float = 4.0
+    """SuperTrack balance multiplier on body-height and root-up tracking terms."""
+    st_fail_w: float = 5.0
+    """SuperTrack weight on soft imagined termination probability."""
+    st_late_w: float = 0.0
+    """SuperTrack linear horizon ramp ``1 + st_late_w * t / (H - 1)``."""
+    st_no_root_terms: bool = False
+    """SuperTrack: omit world-frame root position and rotation terms."""
+
 
 def fast_runner_cfg(**overrides: object) -> SuperMimicRunnerCfg:
     """muscle-supermimic's fast recipe (``scripts/train_blink.sh`` at 8a6244b, 50 Hz control).
@@ -225,3 +253,16 @@ def fast_runner_cfg(**overrides: object) -> SuperMimicRunnerCfg:
     )  # fmt: skip
     recipe.update(overrides)
     return SuperMimicRunnerCfg(**recipe)  # type: ignore[arg-type]
+
+
+def supertrack_runner_cfg(**overrides: object) -> SuperMimicRunnerCfg:
+    """SuperTrack fast recipe (semi-implicit acceleration world model, critic-free L1 BPTT, smooth targets)."""
+    base: dict[str, object] = {
+        "algo": "supertrack",
+        "wm_kind": "accel",
+        "wm_structured": False,
+        "use_critic": False,
+        "target_rate_w": 0.5,
+    }
+    base.update(overrides)
+    return fast_runner_cfg(**base)

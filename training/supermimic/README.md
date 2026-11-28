@@ -19,6 +19,7 @@ myoSuperMimic is a port, not an original MyoSuite method.
 | [supermimic_vibed](https://github.com/zita-ch/supermimic_vibed) (Chong Zhang, ETH Zurich) | MIT | the SuperMimic runner, networks and buffer muscle-supermimic ported; `LICENSE-supermimic_vibed.txt` |
 | [BlinkMimic](https://github.com/fuyichen0725/blinkmimic) and [InstantTrack](https://github.com/Huy-Quang-Dao/instantTrack) | MIT | the fast-recipe pieces muscle-supermimic ported (policy EMA, no-sync update loop, Muon split, policy learning-rate schedule, reset-statistics fixes); `LICENSE-BlinkMimic-InstantTrack.txt` |
 | [XMimic](https://github.com/Sentient-X/xmimic) | MIT | ideas, reimplemented here: the systems options `kin_unbind`, `hoist_goal`, `muon_batched`, `gc_freeze` |
+| [NDM Gym](https://github.com/Frank-ZY-Dou/ndm-gym), SuperTrack ([Fussell et al., TOG 2021](https://doi.org/10.1145/3450626.3459767)), RigidFormer ([Dou et al., arXiv:2605.09196](https://arxiv.org/abs/2605.09196)) | MIT | SuperTrack acceleration world model (`wm_kind="accel"`) and critic-free calibrated L1 tracking (`algo="supertrack"`), body-token `RigidFormer` world-model backbone (`wm_backbone="rigidformer"`), smooth target-rate penalty (`target_rate_w`), and frozen `inference_copy` surrogate simulator; `LICENSE-ndm-gym.txt` |
 | [MuscleMimic](https://github.com/amathislab/musclemimic) | — | the task's MDP and its KIT train/test split (in MyoSuite's task, not here) |
 
 `LICENSE-SuperMimic-Reproduced.txt` keeps the notice of [SuperMimic-Reproduced](https://github.com/CuboiLeo/SuperMimic-Reproduced), the reproduction MyoSuite's first SuperMimic adaptation used.
@@ -80,6 +81,10 @@ python training/supermimic/scripts/finetune.py --checkpoint <run>/model_008000.p
     --iterations 2000 --out logs/ft_my_clips
 # seconds per iteration, piece by piece
 python training/supermimic/scripts/bench.py
+# SuperTrack (semi-implicit acceleration world model + critic-free L1 tracking + smooth targets)
+python training/supermimic/scripts/train.py --agent.algo supertrack --agent.wm-kind accel --agent.use-critic False --agent.target-rate-w 0.5
+# RigidFormer body-token world-model backbone (3D RoPE + kinematic-tree hop bias + pooled muscle attachments)
+python training/supermimic/scripts/train.py --agent.wm-backbone rigidformer --agent.rf-dim 128 --agent.rf-layers 2
 ```
 
 The recipe: CUDA-graphed world-model and policy updates and graphed collection on a second stream, no host syncs,

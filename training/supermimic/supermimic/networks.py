@@ -14,10 +14,12 @@ Ported from muscle-supermimic (github.com/kaibohex/muscle-supermimic, Apache-2.0
 
 from __future__ import annotations
 
+import copy
 import math
+from typing import Any
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from supermimic.heads import (
     invariant_features,
@@ -87,6 +89,23 @@ class RunningNorm(nn.Module):
         return torch.sqrt(self.var + self.eps**2)
 
 
+class TokenInputNorm(RunningNorm):
+    """RunningNorm over leading ``feat_dim`` features; trailing 3D RoPE coordinates pass through."""
+
+    def __init__(self, feat_dim: int, max_count: float = 2e8, eps: float = 1e-2):
+        super().__init__(feat_dim, max_count=max_count, eps=eps)
+        self.feat_dim = feat_dim
+
+    @torch.no_grad()
+    def update(self, x: torch.Tensor):
+        super().update(x[..., : self.feat_dim])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.cat(
+            (super().forward(x[..., : self.feat_dim]), x[..., self.feat_dim :]), dim=-1
+        )
+
+
 # bf16 autocast for MLP matmuls only (state integration, FK, rewards stay fp32)
 AMP_DTYPE: torch.dtype | None = None
 
@@ -134,41 +153,81 @@ def run_mlp(net: nn.Module, x: torch.Tensor) -> torch.Tensor:
 
 
 class WorldModel(nn.Module):
-    """Deterministic body dynamics S_{t+1} = f(S_t, act_t, act_{t+1}) predicting frame-local state increments,
-    with an auxiliary head for the foot touch of S_{t+1}. The activations before and after the step are inputs;
-    contacts are the only observation the analytic heads cannot compute.
+    """Deterministic body dynamics S_{t+1} = f(S_t, act_t, act_{t+1}) with an auxiliary foot-touch head.
 
-    ``structured`` (BlinkMimic's semi-implicit world model): the network predicts the velocity increments, and the
-    positions follow the old and new velocities as the simulator's semi-implicit Euler substeps make them, plus
-    small corrections the network predicts on top of that drift. ``dt`` is the control step and ``substeps`` its
-    physics substeps."""
+    Supports two dynamics parameterizations (adapted with NDM Gym, MIT):
+    - ``kind="increment"`` (SuperMimic / BlinkMimic): frame-local state increments, or ``structured=True``
+      velocity increments plus position corrections on top of semi-implicit Euler drift.
+    - ``kind="accel"`` (SuperTrack): root-frame linear/angular and joint accelerations integrated via
+      semi-implicit Euler with ``pos_coef = (substeps + 1) / (2 * substeps) * dt``.
+
+    Supports ``backbone="mlp"`` (default) and ``backbone="rigidformer"`` (:class:`~supermimic.rigidformer.RigidFormerBackbone`).
+    """
+
+    KINDS = ("increment", "accel")
+    BACKBONES = ("mlp", "rigidformer")
 
     def __init__(self, nq: int, num_muscles: int, num_touch: int, hidden=(2048, 2048, 2048), structured: bool = False,
-                 dt: float = 0.01, substeps: int = 5):  # fmt: skip
+                 dt: float = 0.01, substeps: int = 5, *, kind: str = "increment", backbone: str = "mlp",
+                 kin: Any = None, mj_model: Any = None, rf_cfg: dict | None = None):  # fmt: skip
         super().__init__()
-        self.nq, self.num_touch = nq, num_touch
-        self.structured, self.dt = structured, dt
+        if kind not in self.KINDS:
+            raise ValueError(
+                f"WorldModel kind must be one of {self.KINDS}, got {kind!r}"
+            )
+        if backbone not in self.BACKBONES:
+            raise ValueError(
+                f"WorldModel backbone must be one of {self.BACKBONES}, got {backbone!r}"
+            )
+        self.nq, self.num_muscles, self.num_touch = nq, num_muscles, num_touch
+        self.kind, self.backbone = kind, backbone
+        self.structured = structured and (kind == "increment")
+        self.dt = dt
         # weight of the new velocity in the position drift: n semi-implicit substeps with a linearly changing velocity
         # give sum_{k=1..n} (k / n) / n = (n + 1) / (2 n): 0.6 for 5 substeps (BlinkMimic: 0.625 for its 4)
         self.drift_w = (substeps + 1) / (2 * substeps)
-        self.in_dim = 1 + 6 + 3 + 3 + 2 * nq + 2 * num_muscles
-        self.out_dim = 3 + 3 + 3 + 3 + 2 * nq
-        self.net = mlp(
-            self.in_dim,
-            list(hidden),
-            self.out_dim + num_touch,
-            act=nn.SiLU,
-            layer_norm=True,
-        )
-        nn.init.zeros_(self.net[-1].weight)
-        nn.init.zeros_(self.net[-1].bias)
-        self.in_norm = RunningNorm(self.in_dim)
-        self.out_norm = RunningNorm(self.out_dim, eps=1e-4)  # of the network's targets
-        # of the plain frame-local increments, the loss normalization (equal to out_norm unless structured)
-        self.inc_norm = RunningNorm(self.out_dim, eps=1e-4)
+        self.pos_coef = self.drift_w * dt
+        inc_dim = 3 + 3 + 3 + 3 + 2 * nq
+        self.out_dim = (3 + 3 + nq) if kind == "accel" else inc_dim
+        if backbone == "mlp":
+            self.in_dim = 1 + 6 + 3 + 3 + 2 * nq + 2 * num_muscles
+            self.net = mlp(
+                self.in_dim,
+                list(hidden),
+                self.out_dim + num_touch,
+                act=nn.SiLU,
+                layer_norm=True,
+            )
+            nn.init.zeros_(self.net[-1].weight)
+            nn.init.zeros_(self.net[-1].bias)
+            self.in_norm: RunningNorm = RunningNorm(self.in_dim)
+        else:
+            from supermimic.rigidformer import RigidFormerBackbone
+
+            root_out, joint_out = (6, 1) if kind == "accel" else (12, 2)
+            self.net = RigidFormerBackbone(
+                nq,
+                num_muscles,
+                root_out,
+                joint_out,
+                num_touch,
+                kin=kin,
+                mj_model=mj_model,
+                **(rf_cfg or {}),
+            )
+            self.in_dim = self.net.in_dim
+            self.in_norm = TokenInputNorm(self.net.feat_dim)
+        out_eps = (1e-4 / max(dt, 1e-4)) if kind == "accel" else 1e-4
+        self.out_norm = RunningNorm(
+            self.out_dim, eps=out_eps
+        )  # of the network's targets
+        # of the plain frame-local increments, the loss normalization (equal to out_norm when kind="increment" and not structured)
+        self.inc_norm = RunningNorm(inc_dim, eps=1e-4)
         self.touch_norm = RunningNorm(num_touch)
 
     def inputs(self, S, act, act1):
+        if self.backbone == "rigidformer":
+            return self.net.raw_inputs(S, act, act1)
         return torch.cat((invariant_features(S), act, act1), -1)
 
     @staticmethod
@@ -204,8 +263,20 @@ class WorldModel(nn.Module):
         )
 
     def targets(self, S, S1):
-        """The regression targets: the frame-local increments, or with ``structured`` the velocity increments plus
-        the position corrections on top of the semi-implicit drift."""
+        """Regression targets: accelerations for ``kind='accel'``, else frame-local (or structured) increments."""
+        if self.kind == "accel":
+            Rt = S[1].transpose(-1, -2)
+            return (
+                torch.cat(
+                    (
+                        mv3(Rt, S1[2] - S[2]),
+                        mv3(Rt, S1[3] - S[3]),
+                        S1[5] - S[5],
+                    ),
+                    -1,
+                )
+                / self.dt
+            )
         inc = self.increments(S, S1)
         if not self.structured:
             return inc
@@ -216,6 +287,19 @@ class WorldModel(nn.Module):
     def integrate(self, S, d):
         """Next body state from the denormalized network output ``d`` (the layout of ``targets``)."""
         p, R, v, w, q, qd = S[:6]
+        if self.kind == "accel":
+            av_l, aw_l, aq = d.split((3, 3, self.nq), -1)
+            av, aw = mv3(R, av_l), mv3(R, aw_l)
+            v1, w1, qd1 = v + self.dt * av, w + self.dt * aw, qd + self.dt * aq
+            c = self.pos_coef
+            return (
+                p + self.dt * (v + c * av),
+                mm3(so3_exp(self.dt * (w + c * aw)), R),
+                v1,
+                w1,
+                q + self.dt * (qd + c * aq),
+                qd1,
+            )
         H = yaw_mat(R)
         dp, dth, dv, dw, dq, dqd = d.split((3, 3, 3, 3, self.nq, self.nq), -1)
         v1 = v + mv3(R, dv)
@@ -240,6 +324,131 @@ class WorldModel(nn.Module):
     def state_error(S_hat, S):
         """Frame-local body-state error components (the layout of ``increments``)."""
         return WorldModel.increments(S, S_hat)
+
+
+class InferenceWorldModel(nn.Module):
+    """Frozen forward-only surrogate copy of :class:`WorldModel` (adapted from ``ndm_gym``)."""
+
+    def __init__(self, wm: WorldModel, dtype: torch.dtype | None = None):
+        super().__init__()
+        self.nq = wm.nq
+        self.num_muscles = wm.num_muscles
+        self.num_touch = wm.num_touch
+        self.kind = wm.kind
+        self.backbone = wm.backbone
+        self.structured = wm.structured
+        self.dt = wm.dt
+        self.drift_w = wm.drift_w
+        self.pos_coef = wm.pos_coef
+        self.out_dim = wm.out_dim
+        self.feat_dim = getattr(wm.in_norm, "feat_dim", wm.in_dim)
+        self.net_dtype = dtype
+
+        self.net = copy.deepcopy(wm.net).eval().requires_grad_(False)
+        if dtype is not None:
+            self.net = self.net.to(dtype=dtype)
+
+        self.register_buffer("in_mean", wm.in_norm.mean.detach().float().clone())
+        self.register_buffer(
+            "in_scale", (1.0 / wm.in_norm.std().detach().float()).clone()
+        )
+        self.register_buffer("out_mean", wm.out_norm.mean.detach().float().clone())
+        self.register_buffer("out_std", wm.out_norm.std().detach().float().clone())
+        self.register_buffer("touch_mean", wm.touch_norm.mean.detach().float().clone())
+        self.register_buffer("touch_std", wm.touch_norm.std().detach().float().clone())
+
+    def inputs(self, S, act, act1) -> torch.Tensor:
+        if self.backbone == "rigidformer":
+            return self.net.raw_inputs(S, act, act1)
+        return torch.cat((invariant_features(S), act, act1), -1)
+
+    @torch.no_grad()
+    def step(self, S, act, act1):
+        raw = self.inputs(S, act, act1)
+        head = (raw[..., : self.feat_dim] - self.in_mean) * self.in_scale
+        x = (
+            head
+            if self.feat_dim == raw.shape[-1]
+            else torch.cat((head, raw[..., self.feat_dim :]), -1)
+        )
+        if self.net_dtype is not None:
+            x = x.to(self.net_dtype)
+        y = self.net(x).float()
+        d = y[..., : self.out_dim] * self.out_std + self.out_mean
+        S1 = WorldModel.integrate(self, S, d)
+        return S1, y[..., self.out_dim :]
+
+    @torch.no_grad()
+    def touch(self, touch_n: torch.Tensor) -> torch.Tensor:
+        return torch.relu(touch_n * self.touch_std + self.touch_mean)
+
+    @torch.no_grad()
+    def rollout(
+        self,
+        S0: tuple,
+        act0: torch.Tensor,
+        excitations: torch.Tensor,
+        muscle: Any = None,
+    ):
+        """Step ``excitations`` ``(B, H, M)`` open-loop as a fast batched surrogate simulator."""
+        S, act = S0[:6], act0
+        states, touches, acts = [], [], []
+        for t in range(excitations.shape[1]):
+            u_t = excitations[:, t]
+            act1 = muscle.step(act, u_t)[0] if muscle is not None else u_t
+            S, tn = self.step(S, act, act1)
+            act = act1
+            states.append(S)
+            touches.append(self.touch(tn))
+            acts.append(act)
+        stacked = tuple(torch.stack([st[i] for st in states], dim=1) for i in range(6))
+        return stacked, torch.stack(acts, dim=1), torch.stack(touches, dim=1)
+
+
+def inference_copy(
+    wm: WorldModel,
+    *,
+    dtype: torch.dtype | None = None,
+    check: bool = True,
+    atol: float | None = None,
+) -> InferenceWorldModel:
+    """Create and validate a frozen forward-only simulation copy of *wm*."""
+    from supermimic.rotations import quat_to_mat
+
+    copy_wm = InferenceWorldModel(wm, dtype=dtype)
+    if check:
+        dev = wm.in_norm.mean.device
+        gen = torch.Generator(device=dev).manual_seed(0)
+
+        def rn(*s):
+            return torch.randn(*s, generator=gen, device=dev)
+
+        S = (
+            rn(4, 3),
+            quat_to_mat(rn(4, 4)),
+            0.2 * rn(4, 3),
+            0.2 * rn(4, 3),
+            0.2 * rn(4, wm.nq),
+            0.2 * rn(4, wm.nq),
+        )
+        act = torch.rand(4, wm.num_muscles, generator=gen, device=dev)
+        act1 = torch.rand(4, wm.num_muscles, generator=gen, device=dev)
+        prev_amp = AMP_DTYPE
+        try:
+            globals()["AMP_DTYPE"] = None
+            with torch.no_grad():
+                ref_s, ref_t = wm.step(S, act, act1)
+                got_s, got_t = copy_wm.step(S, act, act1)
+        finally:
+            globals()["AMP_DTYPE"] = prev_amp
+        tol = atol if atol is not None else (5e-2 if dtype == torch.bfloat16 else 1e-5)
+        for a, b in zip(got_s + (got_t,), ref_s + (ref_t,), strict=True):
+            diff = float((a - b).abs().max().item()) if a.numel() > 0 else 0.0
+            if not math.isfinite(diff) or diff > tol:
+                raise RuntimeError(
+                    f"inference_copy mismatch {diff:.3e} > tol {tol:.3e} (dtype={dtype})"
+                )
+    return copy_wm
 
 
 class ActionMap(nn.Module):

@@ -17,7 +17,7 @@ Ported from muscle-supermimic (github.com/kaibohex/muscle-supermimic, Apache-2.0
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def _linears(m: nn.Module) -> list[nn.Linear]:
@@ -31,12 +31,16 @@ class MuonAdam:
     kernel, and the Muon step is done here with the same arithmetic as torch.optim.Muon but with the tensor learning
     rate (torch.optim.Muon reads a tensor lr on the host, so a step captured in a CUDA graph would freeze it)."""
 
-    def __init__(self, model: nn.Module, mlps: list[nn.Module], lr: float, betas=(0.9, 0.95), fused: bool = True,
-                 capturable: bool = False, momentum: float = 0.95, batched: bool = False):  # fmt: skip
+    def __init__(self, model: nn.Module, mlps: list[nn.Module] | None, lr: float, betas=(0.9, 0.95), fused: bool = True,
+                 capturable: bool = False, momentum: float = 0.95, batched: bool = False,
+                 matrices: list[nn.Parameter] | None = None):  # fmt: skip
         self.batched = (
             batched and capturable
         )  # muon_batched: one batched Newton-Schulz per matrix shape
-        hidden = {id(lin.weight) for m in mlps for lin in _linears(m)[1:-1]}
+        if matrices is not None:
+            hidden = {id(p) for p in matrices}
+        else:
+            hidden = {id(lin.weight) for m in (mlps or []) for lin in _linears(m)[1:-1]}
         muon = [p for p in model.parameters() if id(p) in hidden]
         adam = [
             p for p in model.parameters() if id(p) not in hidden and p.requires_grad
@@ -179,7 +183,10 @@ class MuonAdam:
                     for p in g["params"]
                     if p.grad is not None
                 ]
-                bufs = lambda: [self.muon.state[p]["momentum_buffer"] for p in ps]  # noqa: E731
+
+                def bufs():
+                    return [self.muon.state[p]["momentum_buffer"] for p in ps]
+
                 for p in ps:
                     self.muon.state[p].setdefault(
                         "momentum_buffer",

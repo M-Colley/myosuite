@@ -32,14 +32,25 @@ import time
 from dataclasses import asdict, fields
 
 import torch
-import torch.nn as nn
 import torch.utils.checkpoint
 from tensordict import TensorDict
+from torch import nn
 
+from myosuite.envs.myo.backends.mjlab.tasks.mdp import SYNC_TERM
+from myosuite.envs.myo.tasks.mimic.tracking.models import model_version
 from supermimic import networks
 from supermimic.buffer import ReplayBuffer
 from supermimic.collector import STATS, Collector
 from supermimic.config import SuperMimicRunnerCfg
+from supermimic.heads import (
+    NUM_TOUCH,
+    StepCtx,
+    _goal,
+    analytic,
+    flatten_body,
+    unflatten_body,
+)
+from supermimic.mirror import Mirror
 from supermimic.networks import (
     ActionMap,
     Critic,
@@ -48,18 +59,13 @@ from supermimic.networks import (
     WorldModel,
 )
 from supermimic.optim import MuonAdam, gated_step
-from supermimic.heads import (
-    NUM_TOUCH,
-    _goal,
-    StepCtx,
-    analytic,
-    flatten_body,
-    unflatten_body,
+from supermimic.supertrack import (
+    LossBalancer,
+    supertrack_tracking_terms,
+    target_rate_penalty,
+    wm_window_l1_terms,
 )
-from supermimic.mirror import Mirror
 from supermimic.task import TaskView
-from myosuite.envs.myo.backends.mjlab.tasks.mdp import SYNC_TERM
-from myosuite.envs.myo.tasks.mimic.tracking.models import model_version
 
 
 class AnalyticObsGroup:
@@ -307,8 +313,11 @@ class SuperMimicRunner:
                 flush=True,
             )
         self.collector = None  # collect_graph: the thin simulator wrapper (collector.py), built by learn()
+
         # per-component floors on the error normalization (pos, rot, lin vel, ang vel, q, qd increments)
-        f = lambda n, v: torch.full((n,), v)  # noqa: E731
+        def f(n, v):
+            return torch.full((n,), v)
+
         self.err_floor = torch.cat(
             (
                 f(3, 3e-3),
@@ -339,12 +348,48 @@ class SuperMimicRunner:
         "latent_dim",
         "critic_hidden",
         "wm_structured",
+        "wm_kind",
+        "wm_backbone",
+        "rf_dim",
+        "rf_layers",
+        "rf_heads",
+        "rf_registers",
+        "rf_muscle_dim",
     )
+
+    def _resolved_wm_kind(self) -> str:
+        c = self.cfg
+        if c.wm_kind == "auto":
+            return "accel" if c.algo == "supertrack" else "increment"
+        return c.wm_kind
 
     def _build_networks(self):
         c, dev = self.cfg, self.device
-        self.wm = WorldModel(self.nq, self.nm, NUM_TOUCH, c.wm_hidden, structured=c.wm_structured, dt=self.uenv.step_dt,
-                             substeps=self.uenv.cfg.decimation).to(dev)  # fmt: skip
+        wm_kind = self._resolved_wm_kind()
+        rf_cfg = {
+            "dim": c.rf_dim,
+            "layers": c.rf_layers,
+            "heads": c.rf_heads,
+            "registers": c.rf_registers,
+            "muscle_dim": c.rf_muscle_dim,
+        }
+        self.wm = WorldModel(
+            self.nq,
+            self.nm,
+            NUM_TOUCH,
+            c.wm_hidden,
+            structured=c.wm_structured,
+            dt=self.uenv.step_dt,
+            substeps=self.uenv.cfg.decimation,
+            kind=wm_kind,
+            backbone=c.wm_backbone,
+            kin=self.cmd.kin,
+            mj_model=self.cmd.info.m,
+            rf_cfg=rf_cfg,
+        ).to(dev)
+        self.bal_wm = LossBalancer(4).to(dev)
+        n_st_terms = 6 if c.st_no_root_terms else 8
+        self.bal_pi = LossBalancer(n_st_terms).to(dev)
         self.pi = Policy(self.obs_policy.dim, self.obs_goal.dim, self.nm, c.enc_hidden, c.dec_hidden, c.latent_dim,
                          c.init_excitation, action_map=ActionMap(self.nm)).to(dev)  # fmt: skip
         # overlap_wm: imagination steps a copy of the world model taken at the start of each iteration (sync_wm_imag),
@@ -392,8 +437,21 @@ class SuperMimicRunner:
             )
 
         if c.wm_opt == "muon":
-            self.opt_wm = MuonAdam(self.wm, [self.wm.net], lr=c.lr, betas=(0.9, 0.999), fused=c.fused_adam, capturable=graph,
-                                   momentum=c.muon_momentum, batched=c.muon_batched)  # fmt: skip
+            if c.wm_backbone == "rigidformer":
+                self.opt_wm = MuonAdam(
+                    self.wm,
+                    None,
+                    lr=c.lr,
+                    betas=(0.9, 0.999),
+                    fused=c.fused_adam,
+                    capturable=graph,
+                    momentum=c.muon_momentum,
+                    batched=False,
+                    matrices=self.wm.net.hidden_matrices(),
+                )
+            else:
+                self.opt_wm = MuonAdam(self.wm, [self.wm.net], lr=c.lr, betas=(0.9, 0.999), fused=c.fused_adam, capturable=graph,
+                                       momentum=c.muon_momentum, batched=c.muon_batched)  # fmt: skip
         else:
             self.opt_wm = adam(self.wm.parameters())
         if c.pi_opt == "muon":
@@ -455,16 +513,30 @@ class SuperMimicRunner:
         )  # (B, k, ...)
 
     def _wm_err(self, S_hat, s1, touch1, mask):
+        e_touch = ((S_hat[6] - self.wm.touch_norm(touch1)) ** 2).mean(-1)
+        touch_mean = (e_touch * mask).sum() / mask.sum().clamp(min=1)
+        if self.cfg.algo == "supertrack":
+            terms, counts, last_pos = wm_window_l1_terms(
+                self.cmd.kin,
+                S_hat,
+                unflatten_body(s1, self.nq),
+                mask=mask,
+            )
+            if not self.bal_wm.calibrated:
+                self.bal_wm.calibrate(terms, counts)
+            loss = (
+                self.bal_wm.w * terms
+            ).sum() + self.cfg.touch_loss_weight * touch_mean
+            return loss, last_pos, touch_mean
         std = torch.maximum(self.wm.inc_norm.std(), self.err_floor)
         e = (
             self.wm.state_error(S_hat[:6], unflatten_body(s1, self.nq)) / std
         ) ** 2  # (B, k, D)
         e = e.mean(-1)
-        e_touch = ((S_hat[6] - self.wm.touch_norm(touch1)) ** 2).mean(-1)
         loss = (e * mask).sum() / s1.shape[0] + self.cfg.touch_loss_weight * (
             e_touch * mask
         ).sum() / s1.shape[0]
-        return loss, e[:, -1], (e_touch * mask).sum() / mask.sum().clamp(min=1)
+        return loss, e[:, -1], touch_mean
 
     def _imag_step(self, S, hist, f, a_last):
         """One imagined step from S. Also returns the critic input of S (detached), for the critic's targets: it is
@@ -554,7 +626,10 @@ class SuperMimicRunner:
         """The first n windows replaced by their left-right mirror images (body states, activations, excitations,
         touch); the episode-end mask is the same for a window and its image."""
         out = dict(w)
-        mb = lambda x: flatten_body(self.mirror.body(unflatten_body(x, self.nq)))  # noqa: E731
+
+        def mb(x):
+            return flatten_body(self.mirror.body(unflatten_body(x, self.nq)))
+
         for k, fn in (
             ("s", mb),
             ("s1", mb),
@@ -607,7 +682,10 @@ class SuperMimicRunner:
                 hists.append({k: v[idx] for k, v in h.items()}),
             )
             n += len(idx)
-        cat = lambda ds: {k: torch.cat([d[k] for d in ds]) for k in ds[0]}  # noqa: E731
+
+        def cat(ds):
+            return {k: torch.cat([d[k] for d in ds]) for k in ds[0]}
+
         return cat(starts), cat(hists)
 
     def policy_update(self):
@@ -633,7 +711,7 @@ class SuperMimicRunner:
             def step(*x):
                 return torch.utils.checkpoint.checkpoint(
                     self.imag_step, *x, use_reentrant=False
-                )  # noqa: E731
+                )
 
         if c.hoist_goal:
             assert not c.remat_imagination, "hoist_goal: no rematerialization"
@@ -657,10 +735,19 @@ class SuperMimicRunner:
             Ss.append(S), As.append(a_last), Fs.append(f)
             if c.use_critic:
                 X[t] = x
-        flat = lambda xs: torch.stack(xs).flatten(0, 1)  # noqa: E731  (H*B, ...)
+
+        def flat(xs):
+            return torch.stack(xs).flatten(0, 1)
+
         S_all = tuple(flat([St[i] for St in Ss]) for i in range(len(S0)))
-        r, d = self.reward_term(S_all, flat(Fs), flat(As), flat(Aps))
+        flat_f, flat_a, flat_ap = flat(Fs), flat(As), flat(Aps)
+        r, d = self.reward_term(S_all, flat_f, flat_a, flat_ap)
         r, d = r.view(HZ, B), d.view(HZ, B)
+        rate_pen = (
+            target_rate_penalty(flat_a, flat_ap).view(HZ, B)
+            if c.target_rate_w > 0
+            else None
+        )
         if c.cuda_graph:  # the survival products as a loop: cumprod's backward tests for zeros on the host
             acc, cs = torch.ones_like(d[0]), []
             for t in range(HZ):
@@ -670,18 +757,39 @@ class SuperMimicRunner:
         else:
             alive = torch.cumprod(1 - d, 0)  # c_{t+1}
         c_t = torch.cat((torch.ones(1, B, device=dev), alive[:-1]), 0)
-        disc = c.gamma ** torch.arange(HZ, device=dev, dtype=torch.float32).unsqueeze(
-            -1
-        )
-        J = (disc * c_t * r).sum(0)
         surv = alive[-1]
         r_sum = (c_t * r).detach().sum(0)
         rews, dones = r.detach(), d.detach()
-        if c.use_critic:
-            x_last = self.critic_input(S, f, a_last)
-            X[HZ] = x_last.detach()
-            J = J + (c.gamma**HZ) * surv * self.value(x_last)
-        loss = -J.mean()
+        if c.algo == "supertrack":
+            st_terms, st_counts = supertrack_tracking_terms(
+                self.heads, S_all, flat_f, include_root=not c.st_no_root_terms
+            )
+            if not self.bal_pi.calibrated:
+                self.bal_pi.calibrate(st_terms.mean(0), st_counts)
+            mult = torch.ones_like(self.bal_pi.w)
+            mult[4] = c.st_balance_w
+            mult[5] = c.st_balance_w
+            step_track = (st_terms * (self.bal_pi.w * mult)).sum(-1).view(HZ, B)
+            if c.st_late_w != 0.0 and HZ > 1:
+                late = 1.0 + c.st_late_w * torch.arange(
+                    HZ, device=dev, dtype=step_track.dtype
+                ).unsqueeze(-1) / (HZ - 1)
+                step_track = step_track * late
+            step_cost = step_track + c.st_fail_w * self.bal_pi.w.numel() * d
+            if rate_pen is not None:
+                step_cost = step_cost + c.target_rate_w * rate_pen
+            loss = step_cost.mean()
+        else:
+            r_eff = r - c.target_rate_w * rate_pen if rate_pen is not None else r
+            disc = c.gamma ** torch.arange(
+                HZ, device=dev, dtype=torch.float32
+            ).unsqueeze(-1)
+            J = (disc * c_t * r_eff).sum(0)
+            if c.use_critic:
+                x_last = self.critic_input(S, f, a_last)
+                X[HZ] = x_last.detach()
+                J = J + (c.gamma**HZ) * surv * self.value(x_last)
+            loss = -J.mean()
         self.opt_pi.zero_grad(set_to_none=True)
         loss.backward()
         gn = nn.utils.clip_grad_norm_(self.pi.parameters(), c.grad_clip)
@@ -706,7 +814,7 @@ class SuperMimicRunner:
         set_requires_grad(self.critic, True)
         # ---------------- critic: GAE(lambda) targets over the imagined transitions ----------------
         v_loss = torch.zeros((), device=dev)
-        if c.use_critic:
+        if c.use_critic and c.algo != "supertrack":
             # one imagined step at a time: a normalized copy of all (H+1) x B inputs is as large as X itself
             for x in X:
                 self.critic.norm.update(x)
@@ -977,7 +1085,10 @@ class SuperMimicRunner:
             self.iterate(it, n, stats, agg, wm_update, policy_update)
             self.it = it + 1
             if self.it % c.log_interval == 0:
-                mean = lambda x: _nanmean([float(v) for v in x])  # noqa: E731  (collect_graph: NaN = no episode ended)
+
+                def mean(x):
+                    return _nanmean([float(v) for v in x])
+
                 ips = c.log_interval / (time.time() - t_log)
                 t_log = time.time()
                 wall_h = (time.time() - t_start) / 3600
@@ -1055,6 +1166,9 @@ class SuperMimicRunner:
               "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}  # fmt: skip
         if self.critic_targ is not self.critic:
             ck["critic_targ"] = self.critic_targ.state_dict()
+        if self.cfg.algo == "supertrack":
+            ck["bal_wm"] = self.bal_wm.state_dict()
+            ck["bal_pi"] = self.bal_pi.state_dict()
         torch.save(ck, path + ".tmp")
         os.replace(path + ".tmp", path)
 
@@ -1076,14 +1190,16 @@ class SuperMimicRunner:
             raise ValueError(
                 f"checkpoint action map {saved_map} != {self.pi.action_map.spec()}"
             )
+        saved_algo = ck["cfg"].get("algo", "supermimic")
         saved = {
             k: tuple(v) if isinstance(v, list) else v
             for k, v in ck["cfg"].items()
             if k in self.NET_FIELDS
         }
-        if any(
+        if saved_algo != self.cfg.algo or any(
             saved[k] != getattr(self.cfg, k) for k in saved
         ):  # e.g. play/eval with the registered default cfg
+            self.cfg.algo = saved_algo
             for k, v in saved.items():
                 setattr(self.cfg, k, v)
             self._build_networks()
@@ -1112,6 +1228,10 @@ class SuperMimicRunner:
                 },
             }
         self.wm.load_state_dict(wm_sd, strict=strict)
+        if ck.get("bal_wm") is not None:
+            self.bal_wm.load_state_dict(ck["bal_wm"], strict=strict)
+        if ck.get("bal_pi") is not None:
+            self.bal_pi.load_state_dict(ck["bal_pi"], strict=strict)
         self.critic.load_state_dict(ck["critic"], strict=strict)
         if self.critic_targ is not self.critic:
             self.critic_targ.load_state_dict(
